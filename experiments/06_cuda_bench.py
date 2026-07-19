@@ -17,10 +17,14 @@ sweep with meta-llama/Llama-3.2-1B-Instruct on CUDA.
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
 import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _device import default_device, synchronize
 
 from turboquant.quantizer import TurboQuantMSE
 
@@ -40,8 +44,7 @@ def bench(fn, sync, warmup=3, iters=10) -> float:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available()
-                    else ("mps" if torch.backends.mps.is_available() else "cpu"))
+    ap.add_argument("--device", default=default_device())
     ap.add_argument("--n", type=int, default=100_000)
     ap.add_argument("--dims", type=int, nargs="*", default=[200, 1536, 3072])
     ap.add_argument("--bits", type=int, default=4)
@@ -50,8 +53,7 @@ def main() -> None:
     args = ap.parse_args()
 
     dev = args.device
-    sync = (torch.cuda.synchronize if dev == "cuda" else
-            torch.mps.synchronize if dev == "mps" else (lambda: None))
+    sync = lambda: synchronize(dev)
     if dev == "cuda":
         print(torch.cuda.get_device_name())
 
@@ -90,7 +92,6 @@ def main() -> None:
 
     if args.ppl:
         import subprocess
-        import sys
         subprocess.run([
             sys.executable, str(Path(__file__).parent / "03_perplexity.py"),
             "--model", "meta-llama/Llama-3.2-1B-Instruct",

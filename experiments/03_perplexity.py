@@ -27,6 +27,8 @@ import torch.nn.functional as F
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _device import default_device, default_dtype
+
 from turboquant.kv_cache import TurboQuantCache
 
 RESULTS = Path(__file__).resolve().parent.parent / "results"
@@ -66,7 +68,7 @@ def main() -> None:
     ap.add_argument("--ctx", type=int, default=2048)
     ap.add_argument("--chunk", type=int, default=512)
     ap.add_argument("--seqs", type=int, default=20)
-    ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu")
+    ap.add_argument("--device", default=default_device())
     ap.add_argument("--bits", type=str, nargs="*",
                     default=["8", "8:4", "4", "3", "2"],
                     help="ints for uniform K+V bits, or K:V pairs like 8:4")
@@ -74,7 +76,7 @@ def main() -> None:
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    dtype = torch.float16 if args.device == "mps" else torch.float32
+    dtype = default_dtype(args.device)
     tok = AutoTokenizer.from_pretrained(args.model)
     model = AutoModelForCausalLM.from_pretrained(args.model, dtype=dtype).to(
         args.device).eval()

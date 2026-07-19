@@ -1,5 +1,7 @@
 # TurboQuant — from-the-paper implementation
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 A rigorous, standalone implementation of **TurboQuant** (Zandieh, Daliri,
 Hadian, Mirrokni — *TurboQuant: Online Vector Quantization with Near-optimal
 Distortion Rate*, [arXiv:2504.19874](https://arxiv.org/abs/2504.19874)),
@@ -34,7 +36,7 @@ nearest-centroid search), with worst-case per-vector guarantees:
 | 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | 🔧 code complete — runs pending |
 | — | Stretch: TurboQuant-prod (QJL residual, unbiased inner products) | 🔧 code complete — runs pending |
 
-See [PLAN.md](PLAN.md) for the full technical plan, the distortion-rate math,
+See [docs/PLAN.md](docs/PLAN.md) for the full technical plan, the distortion-rate math,
 and per-phase pass/fail criteria.
 
 ## Phase 1 results — codebook engine vs the paper

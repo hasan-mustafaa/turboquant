@@ -6,7 +6,7 @@
 > constant), and keys-need-precision (K8V4 @ 6.125 bits quality-neutral;
 > K4V8 at the same budget reproduces the uniform-b=4 blowup). Phases 5-6 and
 > the QJL stretch: code complete, all runs deferred — see the local,
-> gitignored RUNBOOK.md for the exact commands, expected numbers, and RunPod
+> gitignored docs/RUNBOOK.md for the exact commands, expected numbers, and RunPod
 > hosting steps. Llama-3.2-1B runs need `hf auth login` first.
 
 Target: rigorous from-the-paper implementation of TurboQuant-mse (Zandieh, Daliri,
@@ -283,8 +283,11 @@ b = 1..4. Natural demo: recall@k retrieval on GloVe vs the mse variant.
 
     turboquant/
     ├── README.md               # math summary, results tables vs paper, plots
-    ├── PLAN.md                 # this file
+    ├── LICENSE                 # Apache 2.0
     ├── pyproject.toml
+    ├── docs/
+    │   ├── PLAN.md              # this file
+    │   └── RUNBOOK.md           # gitignored: deferred run commands + RunPod steps
     ├── turboquant/
     │   ├── __init__.py
     │   ├── codebooks.py        # Phase 1: Lloyd-Max (Gaussian + exact Beta)
@@ -295,13 +298,17 @@ b = 1..4. Natural demo: recall@k retrieval on GloVe vs the mse variant.
     ├── tests/
     │   ├── test_codebooks.py   # anchors: centroids + distortion table
     │   ├── test_quantizer.py   # MC distortion, packing roundtrip, Haar sanity
-    │   └── test_kv_cache.py    # b=8 == fp16 logits sanity
+    │   ├── test_kv_cache.py    # b=8 == fp16 logits sanity
+    │   └── test_qjl.py         # Theorem 2: unbiasedness, distortion bound
     ├── experiments/
+    │   ├── 00_quantizer_validation.py
     │   ├── 01_distortion_rate.py
     │   ├── 02_bias.py
     │   ├── 03_perplexity.py
     │   ├── 04_needle.py
-    │   └── 05_memory_bench.py
+    │   ├── 05_memory_bench.py
+    │   ├── 06_cuda_bench.py    # RunPod: paper Table 2 protocol
+    │   └── 07_qjl_validation.py
     └── results/                # json + png, committed (small)
 
 Interviewer-skim logic: README leads with the distortion-rate table

@@ -5,14 +5,20 @@ Prints, for d in {64, 128, 1536} and b in {1..4}:
 - the analytic prediction d * C(f_X, b) from the Phase 1 solver,
 - their ratio (pass criterion: within ~1%),
 plus the exact-Beta vs Gaussian-limit codebook comparison at d = 64, encode/
-decode throughput on CPU and (if available) MPS, and storage accounting.
+decode throughput on CPU and any available accelerator (CUDA or MPS), and
+storage accounting.
 
 Run: .venv/bin/python experiments/00_quantizer_validation.py
 """
 
+import sys
 import time
+from pathlib import Path
 
 import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _device import default_device, synchronize
 
 from turboquant.quantizer import TurboQuantMSE
 
@@ -53,7 +59,8 @@ def main() -> None:
 
     print("\nThroughput (b=4, d=128, batch 100k, best of 3):")
     x = unit_vectors(100_000, 128, seed=7)
-    devices = ["cpu"] + (["mps"] if torch.backends.mps.is_available() else [])
+    accel = default_device()
+    devices = ["cpu"] + ([accel] if accel != "cpu" else [])
     for dev in devices:
         tq = TurboQuantMSE(128, 4, seed=1, device=dev)
         xd = x.to(dev)
@@ -63,17 +70,16 @@ def main() -> None:
             t0 = time.perf_counter()
             q = tq.quantize(xd)
             _ = tq.dequantize(q)
-            if dev == "mps":
-                torch.mps.synchronize()
+            synchronize(dev)
             tt.append(time.perf_counter() - t0)
         best = min(tt)
         gbps = x.nbytes / best / 1e9
         print(f"  {dev:>4}: {best * 1e3:8.2f} ms roundtrip "
               f"({1e-6 * len(x) / best:6.1f} M vec/s, {gbps:5.2f} GB/s fp32 in)")
-        if dev == "mps":
+        if dev != "cpu":
             q_cpu = TurboQuantMSE(128, 4, seed=1).quantize(x)
             match = (q.codes.cpu() == q_cpu.codes).float().mean().item()
-            print(f"        MPS/CPU code agreement: {100 * match:.3f}%")
+            print(f"        {dev.upper()}/CPU code agreement: {100 * match:.3f}%")
 
 
 if __name__ == "__main__":

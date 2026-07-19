@@ -14,10 +14,14 @@ Run: .venv/bin/python experiments/05_memory_bench.py [--model M] [--device mps]
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
 import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _device import default_device, default_dtype, synchronize
 
 from turboquant.kv_cache import TurboQuantCache
 
@@ -37,15 +41,13 @@ def prefill(model, ids, device, cache):
 def decode_speed(model, ids, device, cache_factory, steps=48) -> float:
     cache, logits = prefill(model, ids, device, cache_factory())
     cur = logits.argmax(-1, keepdim=True)
-    if device == "mps":
-        torch.mps.synchronize()
+    synchronize(device)
     t0 = time.perf_counter()
     for _ in range(steps):
         out = model(cur, past_key_values=cache, use_cache=True)
         cache = out.past_key_values
         cur = out.logits[:, -1].argmax(-1, keepdim=True)
-    if device == "mps":
-        torch.mps.synchronize()
+    synchronize(device)
     return steps / (time.perf_counter() - t0)
 
 
@@ -56,24 +58,25 @@ def dynamic_cache_bytes(cache) -> int:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
-    ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu")
+    ap.add_argument("--device", default=default_device())
     ap.add_argument("--lengths", type=int, nargs="*", default=[512, 2048, 4096])
     args = ap.parse_args()
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from datasets import load_dataset
 
-    dtype = torch.float16 if args.device == "mps" else torch.float32
+    dtype = default_dtype(args.device)
     tok = AutoTokenizer.from_pretrained(args.model)
     model = AutoModelForCausalLM.from_pretrained(args.model, dtype=dtype).to(
         args.device).eval()
     cfg = model.config
     head_dim = cfg.hidden_size // cfg.num_attention_heads
     text = "\n\n".join(t for t in load_dataset(
-        "wikitext", "wikitext-2-raw-v1", split="test")["text"] if t.strip())
+        "Salesforce/wikitext", "wikitext-2-raw-v1", split="test")["text"] if t.strip())
     all_ids = tok(text, return_tensors="pt").input_ids
 
-    report = {"model": args.model, "memory": {}, "decode_tok_s": {}}
+    report = {"model": args.model, "device": args.device, "memory": {},
+              "decode_tok_s": {}}
     print(f"{cfg.num_hidden_layers} layers, {cfg.num_key_value_heads} KV heads, "
           f"head_dim {head_dim}\n")
     print(f"{'ctx':>6} {'fp16 cache':>12} {'packed b=4':>12} {'analytic':>12} {'ratio':>7}")

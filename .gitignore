@@ -1,4 +1,4 @@
-RUNBOOK.md
+docs/RUNBOOK.md
 __pycache__/
 *.pyc
 *.egg-info/
