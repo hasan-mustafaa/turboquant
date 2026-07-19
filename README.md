@@ -68,3 +68,17 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest tests/ -q       # 41 assertions against the paper
 .venv/bin/python -m turboquant.codebooks   # prints the table above
 ```
+
+## Source
+
+This is an independent implementation of:
+
+> Amir Zandieh, Majid Daliri, Majid Hadian, Vahab Mirrokni.
+> **TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate.**
+> arXiv:2504.19874, 2025. https://arxiv.org/abs/2504.19874
+
+Related work referenced by the implementation: QJL
+([arXiv:2406.03482](https://arxiv.org/abs/2406.03482), the 1-bit residual
+quantizer used by TurboQuant-prod) and PolarQuant
+([arXiv:2502.02617](https://arxiv.org/abs/2502.02617), a baseline in the
+paper's KV-cache experiments).
