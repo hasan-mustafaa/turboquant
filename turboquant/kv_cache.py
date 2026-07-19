@@ -30,6 +30,15 @@ pathology differently -- its Table 1 configurations always split channels
 into higher-precision outlier sets and never run uniform no-split
 quantization; the outlier channels *are* where the shared constant lives.
 
+Asymmetric bit-widths (`bits_k`/`bits_v`, override `bits` when set). Measured
+on Qwen2.5-0.5B (WikiText-2 perplexity, 10x2048 tokens): K4V8 -- same total
+budget as K8V4, precision on the wrong tensor -- reproduces the uniform-b=4
+blowup (ppl 25.68 vs fp16's 13.30), while K8V4 (6.125 effective bits/coord)
+is within 0.7% of baseline. Keys need precision; values are nearly free
+(V-only b=4 next-token KL 2.6e-4). K8V4 is the config to reach for at small
+model scale; uniform low-bit K+V is not paper-faithful without an outlier
+split (PLAN.md, deferred).
+
 Two storage modes:
 - packed=True: true uint8 bit-packed codes + fp16 norms live on the device;
   every attention call dequantizes the history. This is the honest
