@@ -29,7 +29,7 @@ nearest-centroid search), with worst-case per-vector guarantees:
 | 1 | Lloyd-Max codebook engine (exact Beta + Gaussian limit) | ✅ validated |
 | 2 | Batched TurboQuant-mse quantizer (PyTorch, bit-packing) | ✅ validated |
 | 3 | Distortion-rate validation on DBpedia-OpenAI embeddings (paper §4.1) | ✅ validated |
-| 4 | KV-cache integration (Llama-3.2-1B, `transformers` Cache) | — |
+| 4 | KV-cache integration (`transformers` Cache, Qwen2.5-0.5B / Llama-3.2-1B) | ✅ validated |
 | 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | — |
 | 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | — |
 | — | Stretch: TurboQuant-prod (QJL residual, unbiased inner products) | — |
@@ -128,6 +128,82 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m turboquant.codebooks   # Phase 1 table
 .venv/bin/python experiments/00_quantizer_validation.py  # Phase 2 report
 ```
+
+## Phase 4 results — online KV-cache quantization in a real model
+
+`TurboQuantCache` plugs into `transformers` as `past_key_values`: post-RoPE
+keys and values are quantized per head vector the moment they enter the cache
+(prefill and generation alike — no fp16 recent-token window, stricter than
+KIVI/PolarQuant's eval setting), stored as bit-packed codes + fp16 norms.
+Packed and simulate storage modes agree to the bit; split-point invariance is
+tested (chunked prefill ≡ token-by-token decode).
+
+**Finding — relative-MSE-optimal is not attention-optimal on raw keys.**
+Next-token KL vs the fp32 baseline (Qwen2.5-0.5B, 512-token prompt), before
+any key treatment:
+
+| config | KL(base ‖ quant) |
+|---|---|
+| b=8 K+V | 0.00037 |
+| b=4 **V-only** | 0.00026 |
+| b=4 **K-only** | 0.73 |
+| b=4 K+V | 6.47 |
+
+Values are essentially free; keys are catastrophic — even though the
+quantizer delivers exactly its guaranteed ~0.9% relative error per vector.
+Measured cause: transformer keys are extremely anisotropic. At layer 0 of
+Qwen2.5-0.5B, the token-mean key has norm 255 out of a mean key norm of 259 —
+**~98% of the key norm is a constant shared across tokens** (K-projection
+bias / massive-activation channels), so relative-error quantization spends
+its budget re-encoding a constant while its error floor swamps the ~18% of
+the norm that distinguishes tokens. Attention-sink protection alone does
+nothing (KL 7.1).
+
+**Fix (kept fully online): frozen-μ key centering.** The first 32 tokens stay
+fp16 (doubling as sink protection), their mean μ is frozen once, and every
+later key is quantized as k−μ (μ added back at dequant). One extra fp vector
+per layer-head. KL drops **~1500×** to 0.004; a regression test pins this.
+The per-vector worst-case guarantee holds verbatim for centered vectors.
+
+*Commentary vs the paper:* Table 1's KV results only ever use the
+outlier-channel-split configs (2.5/3.5-bit) — uniform no-split quantization
+is never evaluated end-to-end. This finding explains why the split is
+load-bearing, not a refinement: the outlier channels are where the shared
+constant lives, and granting them extra bits is channel-space centering.
+Frozen-μ centering achieves the same effect vector-wise with near-zero
+overhead.
+
+**Second finding — perplexity is a harder judge than logits, and keys are
+the entire story.** WikiText-2, 10×2048-token sequences, chunked prefill,
+Qwen2.5-0.5B on MPS fp16 (centering on everywhere):
+
+| config | effective bits/coord | ppl | Δ vs fp16 |
+|---|---|---|---|
+| fp16 baseline | 16 | 13.298 | — |
+| b=8 uniform | 8.25 | 13.309 | +0.09% |
+| **K8V4** | **6.125** | **13.389** | **+0.7%** |
+| K4V8 (control) | 6.125 | 25.677 | +93% |
+| b=4 uniform | 4.25 | 25.492 | +91.7% |
+| b=3 uniform | — | 105.3 | +692% |
+| b=2 uniform | — | 360.2 | +2609% |
+
+The K8V4 / K4V8 pair is the controlled experiment: identical bit budget,
+opposite outcome. Damage at b=4 keys *accumulates with context position*
+(+0.06 nats before position 64 → +1.5 nats past 512; fp16 and fp32 profiles
+identical, ruling out numerics) — attention-logit noise grows as more of the
+context is quantized keys, with rare catastrophic tokens (ΔNLL ≈ 14,
+retrieval-type failures). Values quantize essentially for free (b=4 V-only:
+KL 0.00026).
+
+Why this doesn't contradict the paper, but does qualify it: (1) the paper's
+KV model is Llama-3.1-8B with head_dim=128 — its own bound D_prod ∝ 1/d
+gives half the logit-noise variance of head_dim=64, and an 8B model has far
+more redundancy than 0.5B; (2) the paper's configs always grant outlier
+channels extra precision — functionally, extra key precision. Our takeaway
+for small models: **spend the bits on keys** — K8V4 is quality-neutral at
+2.56× compression, while uniform 4-bit (3.76×) is not, on this model. A
+Llama-3.2-1B rerun (gated; pending HF login) and the paper-style
+outlier-split are the natural follow-ons.
 
 ## Source
 

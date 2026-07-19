@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import numpy as np
 from scipy.special import betainc, betaincinv, gammaln, ndtr, ndtri
@@ -137,6 +138,7 @@ def _lloyd_iterate(
     return c, t, p, distortion, it
 
 
+@lru_cache(maxsize=64)
 def gaussian_codebook(
     bits: int,
     d: int | None = None,
@@ -170,11 +172,24 @@ def gaussian_codebook(
     )
 
 
+@lru_cache(maxsize=64)
 def sphere_codebook(
     bits: int,
     d: int,
     tol: float = 1e-10,
     max_iter: int = 150_000,
+) -> Codebook:
+    """(Memoized: a KV cache instantiates one quantizer per layer per run --
+    without caching, a b=8 solve of ~100 s repeated across 24 layers turned a
+    45-second perplexity config into a 45-minute one.)"""
+    return _sphere_codebook_impl(bits, d, tol, max_iter)
+
+
+def _sphere_codebook_impl(
+    bits: int,
+    d: int,
+    tol: float,
+    max_iter: int,
 ) -> Codebook:
     """Optimal quantizer for the exact coordinate marginal of a uniform point
     on S^{d-1}: f_X(t) = C_d * (1 - t^2)^{(d-3)/2} on [-1, 1].
