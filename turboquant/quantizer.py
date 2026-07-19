@@ -15,9 +15,9 @@ norms "in floating-point precision" (Section 1.3). We store fp16: its ~2^-11
 relative error enters the MSE as ~(5e-4)^2 ~ 2.5e-7, four orders of magnitude
 below the b=4 quantization distortion (~9.5e-3), i.e. invisible.
 
-Storage per vector: ceil(d*b/8) code bytes (exact packing for b in {1,2,4,8},
-one byte per code otherwise) + 2 bytes norm. At b=4, d=64 that is
-34 bytes vs 128 bytes fp16 -> 3.76x, matching PLAN.md's accounting.
+Storage per vector: ceil(d*b/8) code bytes (exact bit-level packing for every
+b in 1..8) + 2 bytes norm. At b=4, d=64 that is 34 bytes vs 128 bytes fp16
+-> 3.76x, matching PLAN.md's accounting.
 """
 
 from __future__ import annotations
@@ -29,42 +29,41 @@ import torch
 from turboquant.codebooks import Codebook, gaussian_codebook, sphere_codebook
 from turboquant.rotation import haar_rotation
 
-_PACKABLE_BITS = (1, 2, 4, 8)
-
-
 def pack_codes(idx: torch.Tensor, bits: int) -> torch.Tensor:
     """Pack integer codes in [0, 2^bits) along the last dim into uint8.
 
-    For bits in {1, 2, 4, 8}, 8/bits consecutive codes share one byte
-    (code j occupies bits [j*bits, (j+1)*bits) of its byte, LSB first).
-    Other widths fall back to one byte per code -- the *accounting* in
-    QuantizedBatch.bits_per_coord still reports the true b, and PLAN.md's
-    follow-on (2.5/3.5-bit outlier splits) is where cross-byte packing for
-    b=3 would be added if we choose to store it packed.
+    Bit-level layout: code j occupies bit positions [j*bits, (j+1)*bits) of a
+    little-endian bit stream, so every width b in 1..8 packs to exactly
+    ceil(d*b/8) bytes -- including the cross-byte widths (3, 5, 6, 7) needed
+    for the paper's mixed-precision outlier-split configs.
     """
-    if bits not in _PACKABLE_BITS:
-        return idx.to(torch.uint8)
-    per_byte = 8 // bits
     *lead, d = idx.shape
-    pad = (-d) % per_byte
+    total_bits = d * bits
+    n_bytes = (total_bits + 7) // 8
+    shifts = torch.arange(bits, device=idx.device)
+    stream = ((idx.unsqueeze(-1) >> shifts) & 1).to(torch.uint8)
+    stream = stream.reshape(*lead, total_bits)
+    pad = n_bytes * 8 - total_bits
     if pad:
-        idx = torch.nn.functional.pad(idx, (0, pad))
-    grouped = idx.reshape(*lead, -1, per_byte).to(torch.uint8)
+        stream = torch.nn.functional.pad(stream, (0, pad))
+    grouped = stream.reshape(*lead, n_bytes, 8)
     out = torch.zeros(grouped.shape[:-1], dtype=torch.uint8, device=idx.device)
-    for j in range(per_byte):
-        out |= grouped[..., j] << (j * bits)
+    for j in range(8):
+        out |= grouped[..., j] << j
     return out
 
 
 def unpack_codes(packed: torch.Tensor, bits: int, d: int) -> torch.Tensor:
     """Inverse of pack_codes; returns int64 codes with last dim d."""
-    if bits not in _PACKABLE_BITS:
-        return packed[..., :d].to(torch.int64)
-    per_byte = 8 // bits
-    mask = (1 << bits) - 1
-    parts = [(packed >> (j * bits)) & mask for j in range(per_byte)]
-    codes = torch.stack(parts, dim=-1).reshape(*packed.shape[:-1], -1)
-    return codes[..., :d].to(torch.int64)
+    stream = torch.stack(
+        [(packed >> j) & 1 for j in range(8)], dim=-1
+    ).reshape(*packed.shape[:-1], -1)[..., : d * bits].to(torch.int64)
+    per_code = stream.reshape(*packed.shape[:-1], d, bits)
+    codes = torch.zeros(per_code.shape[:-1], dtype=torch.int64,
+                        device=packed.device)
+    for j in range(bits):
+        codes |= per_code[..., j] << j
+    return codes
 
 
 @dataclass

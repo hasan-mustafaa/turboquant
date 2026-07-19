@@ -13,6 +13,8 @@ from turboquant.codebooks import (
     shannon_lower_bound,
     PAPER_DMSE,
 )
+from turboquant.quantizer import QuantizedBatch, TurboQuantMSE
+from turboquant.rotation import haar_rotation
 
 __all__ = [
     "Codebook",
@@ -21,4 +23,11 @@ __all__ = [
     "panter_dite_upper_bound",
     "shannon_lower_bound",
     "PAPER_DMSE",
+    "QuantizedBatch",
+    "TurboQuantMSE",
+    "haar_rotation",
 ]
+
+# TurboQuantCache / TurboQuantProd are imported from their modules directly
+# (turboquant.kv_cache, turboquant.qjl) to keep `import turboquant` free of
+# the transformers dependency.

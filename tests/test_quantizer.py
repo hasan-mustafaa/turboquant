@@ -55,20 +55,17 @@ class TestRotation:
 
 
 class TestPacking:
-    @pytest.mark.parametrize("bits", [1, 2, 4, 8])
+    @pytest.mark.parametrize("bits", list(range(1, 9)))
     def test_roundtrip_exact(self, bits):
+        """Every width 1..8 packs to exactly ceil(d*b/8) bytes -- including
+        the cross-byte widths (3, 5, 6, 7) used by outlier-split configs."""
         rng = torch.Generator().manual_seed(bits)
-        for d in (64, 128, 1536, 61):  # 61: not divisible by codes-per-byte
+        for d in (64, 128, 1536, 61):  # 61: exercises stream padding
             idx = torch.randint(0, 2**bits, (17, d), generator=rng)
             packed = pack_codes(idx, bits)
             assert packed.dtype == torch.uint8
             assert packed.shape[-1] == math.ceil(d * bits / 8)
             assert torch.equal(unpack_codes(packed, bits, d), idx)
-
-    def test_unpackable_widths_fall_back(self):
-        idx = torch.randint(0, 8, (5, 64))
-        packed = pack_codes(idx, 3)
-        assert torch.equal(unpack_codes(packed, 3, 64), idx)
 
 
 class TestQuantizerMSE:

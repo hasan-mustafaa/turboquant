@@ -179,10 +179,59 @@ def sphere_codebook(
     tol: float = 1e-10,
     max_iter: int = 150_000,
 ) -> Codebook:
-    """(Memoized: a KV cache instantiates one quantizer per layer per run --
-    without caching, a b=8 solve of ~100 s repeated across 24 layers turned a
-    45-second perplexity config into a 45-minute one.)"""
-    return _sphere_codebook_impl(bits, d, tol, max_iter)
+    """(Memoized in-process AND on disk. A KV cache instantiates one
+    quantizer per layer per run -- without the lru cache, a b=8 solve of
+    ~100 s repeated across 24 layers turned a 45-second perplexity config
+    into a 45-minute one; the disk cache removes the remaining once-per-
+    process solve. Set TURBOQUANT_CACHE_DIR to relocate, or
+    TURBOQUANT_NO_DISK_CACHE=1 to disable.)"""
+    cached = _disk_load(bits, d, tol)
+    if cached is not None:
+        return cached
+    cb = _sphere_codebook_impl(bits, d, tol, max_iter)
+    _disk_save(cb, tol)
+    return cb
+
+
+def _disk_cache_path(bits: int, d: int, tol: float):
+    import os
+    from pathlib import Path
+
+    if os.environ.get("TURBOQUANT_NO_DISK_CACHE"):
+        return None
+    root = Path(os.environ.get(
+        "TURBOQUANT_CACHE_DIR",
+        Path.home() / ".cache" / "turboquant"))
+    return root / f"sphere_b{bits}_d{d}_tol{tol:.0e}.npz"
+
+
+def _disk_load(bits: int, d: int, tol: float) -> Codebook | None:
+    path = _disk_cache_path(bits, d, tol)
+    if path is None or not path.exists():
+        return None
+    try:
+        z = np.load(path)
+        return Codebook(
+            bits=bits, kind="sphere", d=d,
+            centroids=z["centroids"], boundaries=z["boundaries"],
+            probs=z["probs"], distortion=float(z["distortion"]),
+            iterations=int(z["iterations"]),
+        )
+    except Exception:
+        return None  # corrupt cache entry: fall through to a fresh solve
+
+
+def _disk_save(cb: Codebook, tol: float) -> None:
+    path = _disk_cache_path(cb.bits, cb.d, tol)
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(path, centroids=cb.centroids, boundaries=cb.boundaries,
+                 probs=cb.probs, distortion=cb.distortion,
+                 iterations=cb.iterations)
+    except OSError:
+        pass  # read-only filesystem: cache is an optimization, not a need
 
 
 def _sphere_codebook_impl(

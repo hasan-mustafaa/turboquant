@@ -67,7 +67,9 @@ def main() -> None:
     ap.add_argument("--chunk", type=int, default=512)
     ap.add_argument("--seqs", type=int, default=20)
     ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu")
-    ap.add_argument("--bits", type=int, nargs="*", default=[8, 4, 3, 2])
+    ap.add_argument("--bits", type=str, nargs="*",
+                    default=["8", "8:4", "4", "3", "2"],
+                    help="ints for uniform K+V bits, or K:V pairs like 8:4")
     args = ap.parse_args()
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -87,11 +89,18 @@ def main() -> None:
     results["fp16"] = base
     print(f"  fp16 baseline: ppl {base:.4f}  [{time.time() - t0:.0f}s]")
     for b in args.bits:
+        if ":" in b:
+            bk, bv = (int(x) for x in b.split(":"))
+            name = f"K{bk}V{bv}"
+            factory = lambda bk=bk, bv=bv: TurboQuantCache(bits_k=bk, bits_v=bv)
+        else:
+            name = f"b={b}"
+            factory = lambda b=int(b): TurboQuantCache(bits=b)
         t0 = time.time()
         ppl = perplexity(model, ids, args.ctx, args.chunk, args.device,
-                         cache_factory=lambda b=b: TurboQuantCache(bits=b))
-        results[f"b={b}"] = ppl
-        print(f"  TurboQuant b={b} (K+V): ppl {ppl:.4f}  "
+                         cache_factory=factory)
+        results[name] = ppl
+        print(f"  TurboQuant {name} (K+V): ppl {ppl:.4f}  "
               f"(+{100 * (ppl / base - 1):.2f}%)  [{time.time() - t0:.0f}s]")
 
     RESULTS.mkdir(exist_ok=True)
