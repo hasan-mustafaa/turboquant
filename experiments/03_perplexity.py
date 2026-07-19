@@ -16,22 +16,19 @@ Run:  .venv/bin/python experiments/03_perplexity.py [--model M] [--ctx 2048]
 """
 
 import argparse
-import json
 import math
+import sys
 import time
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 
-import sys
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _device import default_device, default_dtype
+from _results import save_results
 
 from turboquant.kv_cache import TurboQuantCache
-
-RESULTS = Path(__file__).resolve().parent.parent / "results"
 
 
 def load_wikitext_tokens(tok, n_tokens: int) -> torch.Tensor:
@@ -105,11 +102,9 @@ def main() -> None:
         print(f"  TurboQuant {name} (K+V): ppl {ppl:.4f}  "
               f"(+{100 * (ppl / base - 1):.2f}%)  [{time.time() - t0:.0f}s]")
 
-    RESULTS.mkdir(exist_ok=True)
-    out = RESULTS / "perplexity.json"
-    out.write_text(json.dumps(
-        {"model": args.model, "ctx": args.ctx, "seqs": args.seqs,
-         "device": args.device, "ppl": results}, indent=2))
+    out = save_results("perplexity", {
+        "model": args.model, "ctx": args.ctx, "seqs": args.seqs,
+        "ppl": results}, device=args.device)
     print(f"saved {out}")
 
 

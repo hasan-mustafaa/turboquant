@@ -35,6 +35,7 @@ nearest-centroid search), with worst-case per-vector guarantees:
 | 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | 🔧 code complete — runs pending |
 | 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | 🔧 code complete — runs pending |
 | — | Stretch: TurboQuant-prod (QJL residual, unbiased inner products) | 🔧 code complete — runs pending |
+| — | Outlier-channel split (paper §4.3 mixed precision, e.g. 2.5-bit) | 🔧 code complete — quality runs pending |
 
 See [docs/PLAN.md](docs/PLAN.md) for the full technical plan, the distortion-rate math,
 and per-phase pass/fail criteria.
@@ -126,10 +127,15 @@ Reproduce:
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/ -q       # 68 assertions against the paper
+.venv/bin/python -m pytest tests/ -q --ignore=tests/test_kv_cache.py
+                                           # Tier 1: 100 tests, no model needed
 .venv/bin/python -m turboquant.codebooks   # Phase 1 table
-.venv/bin/python experiments/00_quantizer_validation.py  # Phase 2 report
+turboquant-bench validate                  # Phase 2 report
+turboquant-bench ppl --profile local       # real-model runs (see docs/TESTING.md)
 ```
+
+Full testing guide — three tiers from laptop-only to cloud GPU, with expected
+numbers at each stage: [docs/TESTING.md](docs/TESTING.md).
 
 ## Phase 4 results — online KV-cache quantization in a real model
 
@@ -220,10 +226,26 @@ b=1..4. b=1 degenerates to pure QJL. Tests in
 reproduces the paper's Fig. 1a histograms on the DBpedia set.
 
 Engineering notes: code packing is exact bit-level for every width 1–8
-(cross-byte widths 3/5/6/7 included — the prerequisite for the paper's
-2.5/3.5-bit outlier-split configs); Lloyd-Max codebooks are memoized
+(cross-byte widths 3/5/6/7 included); Lloyd-Max codebooks are memoized
 in-process and on disk (`~/.cache/turboquant/`); Haar rotations are memoized
 per (d, seed).
+
+The **paper's §4.3 mixed-precision outlier split is implemented too**
+([`turboquant/outlier.py`](turboquant/outlier.py)): channels are partitioned
+*before* rotation into an outlier set (selected by per-channel RMS on the
+warmup window, frozen once — applied to *centered* keys in the KV cache) and
+a regular set, each with its own rotation + codebook, e.g. 32 ch × 3 bit +
+96 ch × 2 bit = the paper's 2.5-bit config
+(`TurboQuantCache(bits_k=2, outlier_channels=32, bits_k_outlier=3)`).
+Model-free tests validate selection, reassembly, and storage accounting;
+end-to-end quality numbers await the cloud runs.
+
+Everything is drivable through one CLI, `turboquant-bench`
+([`turboquant/cli.py`](turboquant/cli.py)), with `--profile local`
+(ungated Qwen2.5-0.5B, laptop-scale sweeps) and `--profile cloud`
+(gated Llama-3.2-1B, full sweeps on a rented GPU); results land in
+`results/*.json` with a provenance block (git SHA, device, versions,
+timestamp) — the enforcement mechanism for this repo's no-fake-numbers rule.
 
 ## Source
 

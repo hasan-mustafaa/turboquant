@@ -14,7 +14,6 @@ Run:  .venv/bin/python experiments/04_needle.py [--model M]
 """
 
 import argparse
-import json
 import random
 from pathlib import Path
 
@@ -24,10 +23,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _device import default_device, default_dtype
+from _results import save_results
 
 from turboquant.kv_cache import TurboQuantCache
-
-RESULTS = Path(__file__).resolve().parent.parent / "results"
 
 NEEDLE = ("\n\nThe secret access code for the vault mentioned in the annual "
           "report is {code}. Remember this number carefully.\n\n")
@@ -128,10 +126,9 @@ def main() -> None:
     print(f"PASS: {must_match} match fp16 cell-for-cell" if match
           else f"MISMATCH vs fp16 in {must_match} -- inspect grid")
 
-    RESULTS.mkdir(exist_ok=True)
-    out = RESULTS / "needle.json"
-    out.write_text(json.dumps(
-        {"model": args.model, "grid": grid, "recall": summary}, indent=2))
+    out = save_results("needle", {
+        "model": args.model, "grid": grid, "recall": summary},
+        device=args.device)
     print(f"saved {out}")
 
 

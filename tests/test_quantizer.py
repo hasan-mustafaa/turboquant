@@ -126,6 +126,29 @@ class TestQuantizerMSE:
         x = torch.zeros(3, 64)
         assert torch.equal(tq.roundtrip(x), x)
 
+    def test_unbatched_and_batch_one(self):
+        """A bare (d,) vector and a (1, d) batch must both work and agree."""
+        tq = TurboQuantMSE(64, 4, seed=3)
+        g = torch.Generator().manual_seed(4)
+        x = torch.randn(64, generator=g)
+        flat = tq.roundtrip(x)
+        batched = tq.roundtrip(x.unsqueeze(0))
+        assert flat.shape == (64,)
+        assert batched.shape == (1, 64)
+        assert torch.equal(flat, batched[0])
+
+    def test_dtype_roundtrip(self):
+        """fp16 input into an fp32 quantizer: output in quantizer dtype,
+        error at the quantization level, not the cast level."""
+        tq = TurboQuantMSE(64, 4, seed=3)
+        g = torch.Generator().manual_seed(5)
+        x16 = torch.randn(100, 64, generator=g).to(torch.float16)
+        out = tq.roundtrip(x16)
+        assert out.dtype == torch.float32
+        rel = ((x16.float() - out).pow(2).sum(-1)
+               / x16.float().pow(2).sum(-1)).mean().item()
+        assert rel == pytest.approx(tq.expected_unit_mse, rel=0.05)
+
     def test_storage_accounting(self):
         d, bits, n = 64, 4, 100
         tq = TurboQuantMSE(d, bits)

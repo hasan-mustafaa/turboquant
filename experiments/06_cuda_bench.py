@@ -16,7 +16,6 @@ sweep with meta-llama/Llama-3.2-1B-Instruct on CUDA.
 """
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -25,10 +24,9 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _device import default_device, synchronize
+from _results import save_results
 
 from turboquant.quantizer import TurboQuantMSE
-
-RESULTS = Path(__file__).resolve().parent.parent / "results"
 
 
 def bench(fn, sync, warmup=3, iters=10) -> float:
@@ -85,10 +83,8 @@ def main() -> None:
         report["decode_s"][f"kv_ctx_{ctx}"] = t
         print(f"  ctx={ctx:>7,}: {t * 1e3:8.3f} ms")
 
-    RESULTS.mkdir(exist_ok=True)
-    name = f"cuda_bench_{dev}.json"
-    (RESULTS / name).write_text(json.dumps(report, indent=2))
-    print(f"saved {RESULTS / name}")
+    out = save_results(f"cuda_bench_{dev}", report, device=dev)
+    print(f"saved {out}")
 
     if args.ppl:
         import subprocess

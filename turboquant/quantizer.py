@@ -84,6 +84,17 @@ class QuantizedBatch:
         """Effective storage rate including the norm scalar."""
         return 8.0 * self.num_bytes / (self.norms.numel() * self.d)
 
+    def cat(self, other: "QuantizedBatch") -> "QuantizedBatch":
+        """Concatenate along the token dimension (codes dim -2, norms dim -1).
+        Batches must come from the same quantizer configuration."""
+        if (self.bits, self.d) != (other.bits, other.d):
+            raise ValueError("cannot cat batches from different quantizers")
+        return QuantizedBatch(
+            codes=torch.cat([self.codes, other.codes], dim=-2),
+            norms=torch.cat([self.norms, other.norms], dim=-1),
+            bits=self.bits, d=self.d,
+        )
+
 
 class TurboQuantMSE:
     """b-bit MSE-optimal quantizer for d-dimensional vectors (Algorithm 1).

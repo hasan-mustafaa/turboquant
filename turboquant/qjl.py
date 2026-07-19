@@ -140,6 +140,10 @@ class TurboQuantProd:
         )
 
     def dequantize(self, q: ProdQuantizedBatch) -> torch.Tensor:
+        if q.bits != self.bits or q.d != self.d:
+            raise ValueError(
+                f"batch from a (bits={q.bits}, d={q.d}) quantizer cannot be "
+                f"decoded by this (bits={self.bits}, d={self.d}) instance")
         signs = unpack_codes(q.sign_codes, 1, self.d).to(self.dtype) * 2.0 - 1.0
         scale = math.sqrt(math.pi / 2.0) / self.d
         r_est = scale * q.r_norms.to(self.dtype).unsqueeze(-1) * (signs @ self.S)

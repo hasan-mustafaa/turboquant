@@ -54,6 +54,7 @@ from __future__ import annotations
 import torch
 from transformers.cache_utils import Cache, DynamicLayer
 
+from turboquant.outlier import OutlierSplitQuantizer, select_outlier_channels
 from turboquant.quantizer import QuantizedBatch, TurboQuantMSE
 
 
@@ -70,6 +71,8 @@ class TurboQuantLayer(DynamicLayer):
         codebook: str = "sphere",
         bits_k: int | None = None,
         bits_v: int | None = None,
+        outlier_channels: int = 0,
+        bits_k_outlier: int | None = None,
     ) -> None:
         super().__init__()
         self.bits_k = bits if bits_k is None else bits_k
@@ -79,13 +82,24 @@ class TurboQuantLayer(DynamicLayer):
         self.center_keys = center_keys
         self.packed = packed
         self.codebook_kind = codebook
+        # Paper Section 4.3 mixed precision (keys only -- values are nearly
+        # free to quantize, Phase 4): `outlier_channels` key channels get
+        # `bits_k_outlier` bits (default bits_k + 1, the paper's 3&2 / 4&3
+        # pattern), the rest get bits_k. Selection is frozen from the warmup
+        # window on *centered* keys.
+        self.outlier_channels = outlier_channels
+        self.bits_k_outlier = (
+            min(bits_k_outlier if bits_k_outlier is not None
+                else self.bits_k + 1, 8))
         self._tq_k: TurboQuantMSE | None = None
         self._tq_v: TurboQuantMSE | None = None
+        self._split_k: OutlierSplitQuantizer | None = None
         self._k: QuantizedBatch | None = None  # packed mode storage
         self._v: QuantizedBatch | None = None
         self._warm_k: torch.Tensor | None = None  # first `warmup` tokens, fp
         self._warm_v: torch.Tensor | None = None
         self._mu: torch.Tensor | None = None  # frozen key mean (B, H, 1, D)
+        self._stats_frozen = False
         self._len = 0
 
     def lazy_initialization(self, key_states, value_states):
@@ -103,21 +117,37 @@ class TurboQuantLayer(DynamicLayer):
             codebook=self.codebook_kind, device=key_states.device,
         )
 
-    def _freeze_mu(self, fallback_keys: torch.Tensor) -> None:
-        """Fix the key-centering vector, once, from causal history only."""
+    def _freeze_key_stats(self, fallback_keys: torch.Tensor) -> None:
+        """Fix the key-centering vector and (if enabled) the outlier-channel
+        partition, once, from causal history only (warmup window, or the
+        first quantized chunk when warmup=0)."""
         src = self._warm_k if (
             self._warm_k is not None and self._warm_k.shape[-2] > 0
         ) else fallback_keys
-        self._mu = src.to(torch.float32).mean(dim=-2, keepdim=True)
+        src32 = src.to(torch.float32)
+        if self.center_keys:
+            self._mu = src32.mean(dim=-2, keepdim=True)
+        if self.outlier_channels > 0:
+            sample = src32 - self._mu if self.center_keys else src32
+            idx = select_outlier_channels(sample, self.outlier_channels)
+            self._split_k = OutlierSplitQuantizer(
+                sample.shape[-1], idx,
+                bits_outlier=self.bits_k_outlier, bits_regular=self.bits_k,
+                codebook=self.codebook_kind, seed=self.seed + 700_000,
+                device=sample.device,
+            )
+        self._stats_frozen = True
 
-    def _encode_k(self, k: torch.Tensor) -> QuantizedBatch:
+    def _encode_k(self, k: torch.Tensor):
         k32 = k.to(torch.float32)
         if self.center_keys:
             k32 = k32 - self._mu
-        return self._tq_k.quantize(k32)
+        quantizer = self._split_k if self._split_k is not None else self._tq_k
+        return quantizer.quantize(k32)
 
-    def _decode_k(self, q: QuantizedBatch) -> torch.Tensor:
-        k32 = self._tq_k.dequantize(q)
+    def _decode_k(self, q) -> torch.Tensor:
+        quantizer = self._split_k if self._split_k is not None else self._tq_k
+        k32 = quantizer.dequantize(q)
         if self.center_keys:
             k32 = k32 + self._mu
         return k32.to(self.dtype)
@@ -129,14 +159,10 @@ class TurboQuantLayer(DynamicLayer):
         return self._tq_v.dequantize(q).to(self.dtype)
 
     @staticmethod
-    def _cat(a: QuantizedBatch | None, b: QuantizedBatch) -> QuantizedBatch:
-        if a is None:
-            return b
-        return QuantizedBatch(
-            codes=torch.cat([a.codes, b.codes], dim=-2),
-            norms=torch.cat([a.norms, b.norms], dim=-1),
-            bits=b.bits, d=b.d,
-        )
+    def _cat(a, b):
+        """Append batch b after batch a (either QuantizedBatch or
+        SplitQuantizedBatch -- both expose .cat)."""
+        return b if a is None else a.cat(b)
 
     def update(self, key_states, value_states, *args, **kwargs):
         if not self.is_initialized:
@@ -155,8 +181,8 @@ class TurboQuantLayer(DynamicLayer):
             self._warm_v = warm_v if self._warm_v is None else torch.cat(
                 [self._warm_v, warm_v], dim=-2)
         has_new_q = key_q.shape[-2] > 0
-        if has_new_q and self.center_keys and self._mu is None:
-            self._freeze_mu(fallback_keys=key_q)
+        if has_new_q and not self._stats_frozen:
+            self._freeze_key_stats(fallback_keys=key_q)
 
         if not self.packed:
             # simulate mode: quantize-dequantize exactly once, then hand the
@@ -228,11 +254,14 @@ class TurboQuantCache(Cache):
         codebook: str = "sphere",
         bits_k: int | None = None,
         bits_v: int | None = None,
+        outlier_channels: int = 0,
+        bits_k_outlier: int | None = None,
         **kwargs,
     ) -> None:
         self._layer_kwargs = dict(
             bits=bits, seed=seed, warmup=warmup, center_keys=center_keys,
             packed=packed, codebook=codebook, bits_k=bits_k, bits_v=bits_v,
+            outlier_channels=outlier_channels, bits_k_outlier=bits_k_outlier,
         )
         super().__init__(layer_class_to_replicate=self._make_layer, **kwargs)
 

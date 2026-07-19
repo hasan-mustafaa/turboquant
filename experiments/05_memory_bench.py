@@ -13,7 +13,6 @@ Run: .venv/bin/python experiments/05_memory_bench.py [--model M] [--device mps]
 """
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -22,10 +21,9 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _device import default_device, default_dtype, synchronize
+from _results import save_results
 
 from turboquant.kv_cache import TurboQuantCache
-
-RESULTS = Path(__file__).resolve().parent.parent / "results"
 
 
 @torch.no_grad()
@@ -106,9 +104,8 @@ def main() -> None:
         report["decode_tok_s"][name] = tps
         print(f"  {name:>13}: {tps:6.2f} tok/s")
 
-    RESULTS.mkdir(exist_ok=True)
-    (RESULTS / "memory_bench.json").write_text(json.dumps(report, indent=2))
-    print(f"saved {RESULTS / 'memory_bench.json'}")
+    out = save_results("memory_bench", report, device=args.device)
+    print(f"saved {out}")
 
 
 if __name__ == "__main__":

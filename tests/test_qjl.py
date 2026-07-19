@@ -36,17 +36,29 @@ def _unit(n, d, seed):
 class TestTurboQuantProd:
     @pytest.mark.parametrize("bits", [1, 2, 3, 4])
     def test_unbiased_inner_products(self, bits):
-        """Regression slope of <y, x~> on <y, x> == 1 within MC error."""
-        x = _unit(N_X, D, seed=bits)
+        """Regression slope of <y, x~> on <y, x> == 1 within MC error.
+
+        Theorem 2's unbiasedness is an expectation over the quantizer's own
+        randomness (S, Pi). A single fixed instance realizes a multiplicative
+        gain of 1 + O(sqrt(Dmse(b-1))/sqrt(d)) that does NOT average out over
+        data -- at b=1 (pure QJL, ||r||=1, d=256) that is a ~1% fluctuation.
+        So the test averages the slope over independent quantizer instances,
+        which is exactly the E_Q the theorem states.
+        """
         y = _unit(N_Y, D, seed=100 + bits)
-        tq = TurboQuantProd(D, bits, seed=7)
-        ips = (y @ x.T).flatten()
-        ipd = (y @ tq.roundtrip(x).T).flatten()
-        slope = float((ips * ipd).sum() / (ips * ips).sum())
-        assert slope == pytest.approx(1.0, abs=5e-3), slope
+        n_seeds, n_x = 12, 4_000
+        slopes = []
+        for seed in range(n_seeds):
+            x = _unit(n_x, D, seed=1000 * bits + seed)
+            tq = TurboQuantProd(D, bits, seed=seed)
+            ips = (y @ x.T).flatten()
+            ipd = (y @ tq.roundtrip(x).T).flatten()
+            slopes.append(float((ips * ipd).sum() / (ips * ips).sum()))
+        mean_slope = sum(slopes) / n_seeds
+        assert mean_slope == pytest.approx(1.0, abs=5e-3), (mean_slope, slopes)
         # and strictly less shrunk than the biased mse variant at the same b
         mse_slope = 1.0 - TurboQuantMSE(D, bits, seed=7).expected_unit_mse
-        assert abs(slope - 1.0) < (1.0 - mse_slope) / 4
+        assert abs(mean_slope - 1.0) < (1.0 - mse_slope) / 4
 
     @pytest.mark.parametrize("bits", [1, 2, 3, 4])
     def test_dprod_within_theorem2(self, bits):
@@ -84,6 +96,22 @@ class TestTurboQuantProd:
         # distortion plus the QJL residual variance (roughly 2x mse-at-b)
         mse_b1 = TurboQuantMSE(D, 3, seed=2).expected_unit_mse
         assert rel.item() < 2.5 * mse_b1
+
+    def test_zero_vector_and_zero_residual_safe(self):
+        tq = TurboQuantProd(D, 4, seed=4)
+        z = torch.zeros(3, D)
+        out = tq.roundtrip(z)
+        assert torch.equal(out, z)  # x_norm = 0 zeroes everything
+        # exact-reconstruction inputs give r = 0 -> QJL stage contributes 0
+        c = tq.mse.rotation[0].unsqueeze(0)  # a vector the mse stage maps
+        q = tq.quantize(c)
+        assert torch.isfinite(tq.dequantize(q)).all()
+
+    def test_mismatched_batch_rejected(self):
+        x = _unit(4, D, seed=0)
+        q3 = TurboQuantProd(D, 3, seed=1).quantize(x)
+        with pytest.raises(ValueError):
+            TurboQuantProd(D, 4, seed=1).dequantize(q3)
 
     def test_deterministic_given_seed(self):
         x = _unit(50, D, seed=9)
