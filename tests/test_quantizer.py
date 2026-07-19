@@ -138,6 +138,25 @@ class TestQuantizerMSE:
         # 4.25 effective bits/coord at d=64 -> 16/4.25 = 3.76x vs fp16
         assert q.bits_per_coord == pytest.approx(4.25)
 
+    @pytest.mark.parametrize("bits", [1, 2, 4])
+    def test_shrinkage_identity(self, bits):
+        """The mse quantizer is a shrinkage estimator: E<x, x~> = 1 - Dmse.
+
+        Proof sketch: E<x,x~> = sum_j E[y_j y~_j] = d * sum_i p_i c_i^2
+        (centroid condition), and d * (Var - sum p c^2) = Dmse, with
+        d * Var = 1. At b=1 this reduces to the paper's 2/pi bias factor:
+        1 - (1 - 2/pi) = 2/pi. The paper proves b=1 via the Gaussian sign
+        identity; this form gives every bit-width at once, and predicts the
+        inner-product bias TurboQuant-prod exists to remove.
+        """
+        d = 256
+        gen = torch.Generator().manual_seed(bits)
+        x = torch.randn(30_000, d, generator=gen)
+        x = x / x.norm(dim=-1, keepdim=True)
+        tq = TurboQuantMSE(d, bits, seed=6)
+        alpha = (x * tq.roundtrip(x)).sum(-1).mean().item()
+        assert alpha == pytest.approx(1.0 - tq.expected_unit_mse, abs=2e-3)
+
     def test_gaussian_codebook_slightly_worse_at_small_d(self):
         """The paper's deployment shortcut (precomputed Gaussian-limit
         codebooks) costs well under 1% MSE at d=64 vs the exact Beta codebook:

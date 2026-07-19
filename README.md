@@ -28,7 +28,7 @@ nearest-centroid search), with worst-case per-vector guarantees:
 |---|---|---|
 | 1 | Lloyd-Max codebook engine (exact Beta + Gaussian limit) | ✅ validated |
 | 2 | Batched TurboQuant-mse quantizer (PyTorch, bit-packing) | ✅ validated |
-| 3 | Distortion-rate validation on DBpedia-OpenAI embeddings (paper §4.1) | — |
+| 3 | Distortion-rate validation on DBpedia-OpenAI embeddings (paper §4.1) | ✅ validated |
 | 4 | KV-cache integration (Llama-3.2-1B, `transformers` Cache) | — |
 | 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | — |
 | 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | — |
@@ -88,6 +88,37 @@ on random unit vectors:
   (**3.88×**), norm overhead included.
 - Throughput (M2, batch 100k, d=128, b=4): 1.5M vec/s CPU, 3.0M vec/s MPS,
   with 100.000% CPU/MPS code agreement.
+
+## Phase 3 results — the paper's §4.1 experiment on its actual dataset
+
+100k DBpedia entities × OpenAI text-embedding-3-large-1536 (the dataset behind
+the paper's Fig. 3), 1k held-out queries, streamed sample:
+
+| b | D_mse measured | D_mse analytic | ratio | shrinkage α measured | α = 1−D_mse predicted |
+|---|---|---|---|---|---|
+| 1 | 0.363406 | 0.363173 | 1.0006 | 0.6344 | 0.6368 (= 2/π) |
+| 2 | 0.117485 | 0.117358 | 1.0011 | 0.8812 | 0.8826 |
+| 3 | 0.034542 | 0.034499 | 1.0012 | 0.9650 | 0.9655 |
+| 4 | 0.009498 | 0.009485 | 1.0014 | 0.9904 | 0.9905 |
+| 5 | 0.002504 | 0.002500 | 1.0015 | 0.9974 | 0.9975 |
+
+([Fig. 3 reproduction](results/fig3_reproduction.png) ·
+[bias histograms](results/bias_histograms.png))
+
+- **Data-obliviousness, demonstrated**: real-embedding distortion matches the
+  worst-case analytic value to ≤0.15% at every bit-width — the guarantee is a
+  property of the rotation, not the data, exactly as the theory says.
+- **A shrinkage law the paper only states for b=1.** The paper proves
+  E⟨y, x̃⟩ = (2/π)⟨y, x⟩ at one bit via the Gaussian sign identity. The Lloyd
+  centroid condition gives the general law for free:
+  E[X·X̃] = Σᵢ pᵢcᵢ², hence **α_b = 1 − D_mse(b)** at every bit-width —
+  2/π = 1 − (1 − 2/π) is the b=1 special case. Measured α matches to ≤0.4%
+  (the residual ~0.2% deficit is single-rotation realization noise: the
+  identity holds in expectation over Π, and one fixed Π's empirical α
+  fluctuates by O(1/√(d·2ᵇ))). This is precisely the bias TurboQuant-prod's
+  QJL residual stage exists to remove — and why the mse variant's
+  inner-product error (d·D_prod = 2.55 at b=1) is *worse* than the paper's
+  unbiased prod variant (1.57): the gap is the bias² term D²·⟨y,x⟩².
 
 Reproduce:
 
