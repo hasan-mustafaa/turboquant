@@ -1,0 +1,20 @@
+[project]
+name = "turboquant"
+version = "0.1.0"
+description = "From-the-paper implementation of TurboQuant (arXiv:2504.19874): online, data-oblivious vector quantization with near-optimal distortion rate, applied to LLM KV-cache compression."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Hasan Mustafa" }]
+dependencies = ["numpy>=1.24", "scipy>=1.10"]
+
+[project.optional-dependencies]
+llm = ["torch>=2.1", "transformers>=4.44", "datasets", "accelerate"]
+dev = ["pytest", "matplotlib"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["turboquant*"]
