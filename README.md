@@ -30,9 +30,9 @@ nearest-centroid search), with worst-case per-vector guarantees:
 | 2 | Batched TurboQuant-mse quantizer (PyTorch, bit-packing) | ✅ validated |
 | 3 | Distortion-rate validation on DBpedia-OpenAI embeddings (paper §4.1) | ✅ validated |
 | 4 | KV-cache integration (`transformers` Cache, Qwen2.5-0.5B / Llama-3.2-1B) | ✅ validated |
-| 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | — |
-| 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | — |
-| — | Stretch: TurboQuant-prod (QJL residual, unbiased inner products) | — |
+| 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | 🔧 code complete — runs pending |
+| 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | 🔧 code complete — runs pending |
+| — | Stretch: TurboQuant-prod (QJL residual, unbiased inner products) | 🔧 code complete — runs pending |
 
 See [PLAN.md](PLAN.md) for the full technical plan, the distortion-rate math,
 and per-phase pass/fail criteria.
@@ -204,6 +204,24 @@ for small models: **spend the bits on keys** — K8V4 is quality-neutral at
 2.56× compression, while uniform 4-bit (3.76×) is not, on this model. A
 Llama-3.2-1B rerun (gated; pending HF login) and the paper-style
 outlier-split are the natural follow-ons.
+
+## Stretch phase — TurboQuant-prod (implemented; validation runs pending)
+
+[`turboquant/qjl.py`](turboquant/qjl.py) implements Algorithm 2: mse stage at
+b−1 bits, then the QJL transform (sign(S·r), S Gaussian) on the residual with
+its norm stored — an **unbiased** inner-product estimator
+(E⟨y, x̃⟩ = ⟨y, x⟩ exactly, versus the mse variant's (1−D_mse) shrinkage)
+with D_prod ≤ (π/2d)·D_mse(b−1), the paper's {≈1.57, 0.56, 0.18, 0.047}/d at
+b=1..4. b=1 degenerates to pure QJL. Tests in
+[`tests/test_qjl.py`](tests/test_qjl.py) encode Theorem 2;
+[`experiments/07_qjl_validation.py`](experiments/07_qjl_validation.py)
+reproduces the paper's Fig. 1a histograms on the DBpedia set.
+
+Engineering notes: code packing is exact bit-level for every width 1–8
+(cross-byte widths 3/5/6/7 included — the prerequisite for the paper's
+2.5/3.5-bit outlier-split configs); Lloyd-Max codebooks are memoized
+in-process and on disk (`~/.cache/turboquant/`); Haar rotations are memoized
+per (d, seed).
 
 ## Source
 

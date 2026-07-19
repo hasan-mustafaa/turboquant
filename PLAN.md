@@ -1,13 +1,13 @@
 # TurboQuant-mse Implementation Plan
 
-> Status 2026-07-19: Phases 1-3 complete, validated, pushed. Phase 4 complete
-> (perplexity sweep pending), with one design addition not in the paper:
-> frozen-mu online key centering (see README Phase 4 — raw 4-bit keys are
-> catastrophic on Qwen2.5-0.5B because ~98% of key norm is a shared constant;
-> the paper's outlier-split configs address the same pathology). Phases 5-6
-> in progress. Llama-3.2-1B blocked on HF login (`.venv/bin/hf auth login`);
-> all model runs use ungated Qwen2.5-0.5B-Instruct (same head_dim=64) until
-> then. RunPod CUDA benchmark ready in experiments/06_cuda_bench.py.
+> Status 2026-07-19 (end of implementation): Phases 1-4 complete, validated,
+> pushed. Phase 4 findings: frozen-mu online key centering required (raw
+> 4-bit keys catastrophic on Qwen2.5-0.5B — ~98% of key norm is a shared
+> constant), and keys-need-precision (K8V4 @ 6.125 bits quality-neutral;
+> K4V8 at the same budget reproduces the uniform-b=4 blowup). Phases 5-6 and
+> the QJL stretch: code complete, all runs deferred — see the local,
+> gitignored RUNBOOK.md for the exact commands, expected numbers, and RunPod
+> hosting steps. Llama-3.2-1B runs need `hf auth login` first.
 
 Target: rigorous from-the-paper implementation of TurboQuant-mse (Zandieh, Daliri,
 Hadian, Mirrokni — "TurboQuant: Online Vector Quantization with Near-optimal
