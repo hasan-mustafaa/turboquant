@@ -27,7 +27,7 @@ nearest-centroid search), with worst-case per-vector guarantees:
 | Phase | Deliverable | Status |
 |---|---|---|
 | 1 | Lloyd-Max codebook engine (exact Beta + Gaussian limit) | ✅ validated |
-| 2 | Batched TurboQuant-mse quantizer (PyTorch, bit-packing) | — |
+| 2 | Batched TurboQuant-mse quantizer (PyTorch, bit-packing) | ✅ validated |
 | 3 | Distortion-rate validation on DBpedia-OpenAI embeddings (paper §4.1) | — |
 | 4 | KV-cache integration (Llama-3.2-1B, `transformers` Cache) | — |
 | 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | — |
@@ -61,12 +61,41 @@ Lloyd-Max iteration (closed-form cell statistics, no quadrature):
   0.0095 (Max, 1960) — the paper's own bounds bracket both, and our tests
   assert the precise values.
 
+## Phase 2 results — batched quantizer (Algorithm 1) vs theory
+
+End-to-end Monte-Carlo MSE (Haar rotation → bucketize encode → uint8
+bit-packing → decode → back-rotation) against the analytic d·C(f_X, b),
+on random unit vectors:
+
+| d | b=1 | b=2 | b=3 | b=4 | worst ratio to analytic |
+|---|---|---|---|---|---|
+| 64 (Llama-3.2-1B head_dim) | 0.358236 | 0.114444 | 0.033353 | 0.009127 | 0.9989 |
+| 128 | 0.360905 | 0.115994 | 0.033968 | 0.009316 | 1.0002 |
+| 1536 (OpenAI embeddings) | 0.363290 | 0.117353 | 0.034515 | 0.009492 | 1.0007 |
+
+- Every empirical value is within **0.1%** of the analytically-solved optimum,
+  and the guarantee also holds for *fixed* worst-case inputs averaged over
+  rotations (tested) — the sense in which the paper's Theorem 1 is stated.
+- **Haar-ness is load-bearing and tested**: raw LAPACK QR output is *not*
+  Haar-distributed; the column sign-fix (Mezzadri 2007) is required, and a
+  KS test on rotated fixed vectors against the Lemma 1 marginal guards it.
+- **Finding — the paper's precomputed-codebook shortcut is essentially free:**
+  using the d→∞ Gaussian-limit codebook on true d=64 sphere data costs only
+  +0.47% MSE at b=4 (not the ~4% the source-distortion gap suggests), because
+  distortion is stationary in the centroids at the Lloyd optimum — codebook
+  perturbations enter only at second order (envelope theorem).
+- Storage: 4.25 bits/coord at d=64 (**3.76×** vs fp16), 4.125 at d=128
+  (**3.88×**), norm overhead included.
+- Throughput (M2, batch 100k, d=128, b=4): 1.5M vec/s CPU, 3.0M vec/s MPS,
+  with 100.000% CPU/MPS code agreement.
+
 Reproduce:
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/ -q       # 41 assertions against the paper
-.venv/bin/python -m turboquant.codebooks   # prints the table above
+.venv/bin/python -m pytest tests/ -q       # 68 assertions against the paper
+.venv/bin/python -m turboquant.codebooks   # Phase 1 table
+.venv/bin/python experiments/00_quantizer_validation.py  # Phase 2 report
 ```
 
 ## Source
