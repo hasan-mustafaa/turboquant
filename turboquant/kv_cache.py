@@ -84,9 +84,10 @@ class TurboQuantLayer(DynamicLayer):
         self.codebook_kind = codebook
         # Paper Section 4.3 mixed precision (keys only -- values are nearly
         # free to quantize, Phase 4): `outlier_channels` key channels get
-        # `bits_k_outlier` bits (default bits_k + 1, the paper's 3&2 / 4&3
-        # pattern), the rest get bits_k. Selection is frozen from the warmup
-        # window on *centered* keys.
+        # `bits_k_outlier` bits (default bits_k + 1, the paper's printed 3&2
+        # pattern; pass bits_k + 2 for the label-faithful reading -- see the
+        # arithmetic discrepancy note in outlier.py), the rest get bits_k.
+        # Selection is frozen from the warmup window on *centered* keys.
         self.outlier_channels = outlier_channels
         self.bits_k_outlier = (
             min(bits_k_outlier if bits_k_outlier is not None

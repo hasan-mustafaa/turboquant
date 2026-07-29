@@ -22,10 +22,9 @@ import torch
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _configs import parse_bits_token
 from _device import default_device, default_dtype
 from _results import save_results
-
-from turboquant.kv_cache import TurboQuantCache
 
 NEEDLE = ("\n\nThe secret access code for the vault mentioned in the annual "
           "report is {code}. Remember this number carefully.\n\n")
@@ -73,7 +72,8 @@ def main() -> None:
     ap.add_argument("--depths", type=float, nargs="*",
                     default=[0.0, 0.25, 0.5, 0.75, 1.0])
     ap.add_argument("--bits", type=str, nargs="*", default=["8:4", "4", "2"],
-                    help="ints for uniform K+V bits, or K:V pairs like 8:4")
+                    help="ints for uniform K+V bits, K:V pairs like 8:4, or "
+                         "outlier splits like 2+16x4:8 (see _configs.py)")
     ap.add_argument("--device", default=default_device())
     args = ap.parse_args()
 
@@ -91,12 +91,8 @@ def main() -> None:
 
     configs = {"fp16": lambda: None}
     for b in args.bits:
-        if ":" in b:
-            bk, bv = (int(x) for x in b.split(":"))
-            configs[f"K{bk}V{bv}"] = (
-                lambda bk=bk, bv=bv: TurboQuantCache(bits_k=bk, bits_v=bv))
-        else:
-            configs[f"b={b}"] = lambda b=int(b): TurboQuantCache(bits=int(b))
+        name, factory = parse_bits_token(b)
+        configs[name] = factory
 
     rng = random.Random(0)
     grid = {name: {} for name in configs}

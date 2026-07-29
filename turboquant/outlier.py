@@ -3,8 +3,12 @@
 Every TurboQuant KV result in the paper's Table 1 uses this, not uniform
 quantization: "splitting channels into outlier and non-outlier sets, and
 applying two independent instances of TurboQuant to each, allocating higher
-bit precision to outliers" -- e.g. 32 outlier channels at 3 bits + 96 at
-2 bits = 2.5 effective bits. The paper does not specify the selection rule;
+bit precision to outliers". Discrepancy flagged, not forced: the paper's
+printed config is "(32*3+96*2)/128=2.5" -- verbatim -- but that arithmetic
+equals 2.25, not 2.5. Either the label is wrong (they ran 2.25 effective
+bits) or the formula is misprinted (32*4+96*2 = 320/128 would give a true
+2.5). Both interpretations are implemented and evaluated here; see README.
+The paper does not specify the selection rule;
 following the outlier-KV literature it cites (RotateKV, and KVQuant-style
 magnitude ranking), we rank channels by a scale statistic computed on a
 sample and freeze the partition.

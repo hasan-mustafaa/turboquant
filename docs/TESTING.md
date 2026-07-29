@@ -115,9 +115,11 @@ What a genuine pass looks like:
   "0.03"/"0.009" — truncations; see README).
 - **Memory**: uniform 4-bit = 3.76× vs fp16 at head_dim 64 (3.88× at 128),
   norms included. The paper's headline "4–6×" corresponds to its 2.5/3.5-bit
-  outlier-split configs, now implemented (`outlier_channels=...`,
-  e.g. 32 channels at 3 bits + 96 at 2 bits = 2.5 bits/coord); their
-  end-to-end quality at Llama scale is **pending a cloud run**.
+  outlier-split configs, implemented as `outlier_channels=...` /
+  `bits_k_outlier=...`. Note the paper's printed config "(32×3+96×2)/128=2.5"
+  actually equals 2.25 — both readings (3&2 literal formula, 4&2 matching the
+  label) are evaluated; see README's outlier section for the measured
+  end-to-end quality.
 - **Speedup**: no fused CUDA kernels here, so no attention-latency claims
   are made or reproduced. (Note: the "8× logit speedup on H100" figure some
   summaries attribute to this paper is not in arXiv v1 at all.)

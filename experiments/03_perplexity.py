@@ -25,10 +25,9 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _configs import parse_bits_token
 from _device import default_device, default_dtype
 from _results import save_results
-
-from turboquant.kv_cache import TurboQuantCache
 
 
 def load_wikitext_tokens(tok, n_tokens: int) -> torch.Tensor:
@@ -68,7 +67,8 @@ def main() -> None:
     ap.add_argument("--device", default=default_device())
     ap.add_argument("--bits", type=str, nargs="*",
                     default=["8", "8:4", "4", "3", "2"],
-                    help="ints for uniform K+V bits, or K:V pairs like 8:4")
+                    help="ints for uniform K+V bits, K:V pairs like 8:4, or "
+                         "outlier splits like 2+16x4:8 (see _configs.py)")
     args = ap.parse_args()
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -88,13 +88,7 @@ def main() -> None:
     results["fp16"] = base
     print(f"  fp16 baseline: ppl {base:.4f}  [{time.time() - t0:.0f}s]")
     for b in args.bits:
-        if ":" in b:
-            bk, bv = (int(x) for x in b.split(":"))
-            name = f"K{bk}V{bv}"
-            factory = lambda bk=bk, bv=bv: TurboQuantCache(bits_k=bk, bits_v=bv)
-        else:
-            name = f"b={b}"
-            factory = lambda b=int(b): TurboQuantCache(bits=b)
+        name, factory = parse_bits_token(b)
         t0 = time.time()
         ppl = perplexity(model, ids, args.ctx, args.chunk, args.device,
                          cache_factory=factory)
