@@ -86,8 +86,10 @@ def main() -> None:
         fp16_b = fp16_b if dtype == torch.float16 else fp16_b // 2
         qcache, _ = prefill(model, ids, args.device, TurboQuantCache(bits=4, packed=True))
         q_b = qcache.quantized_bytes
-        analytic = cfg.num_hidden_layers * 2 * cfg.num_key_value_heads * L * (
-            head_dim * 4 // 8 + 2)
+        warmup = 32
+        analytic = cfg.num_hidden_layers * 2 * cfg.num_key_value_heads * (
+            (L - warmup) * (head_dim * 4 // 8 + 2) + warmup * head_dim * 2
+        ) + cfg.num_hidden_layers * cfg.num_key_value_heads * head_dim * 4
         print(f"{L:>6} {fp16_b:>12,} {q_b:>12,} {analytic:>12,} "
               f"{fp16_b / q_b:>6.2f}x")
         assert q_b == analytic, "measured bytes != analytic formula"
