@@ -28,14 +28,14 @@ nearest-centroid search), with worst-case per-vector guarantees:
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| 1 | Lloyd-Max codebook engine (exact Beta + Gaussian limit) | ✅ validated |
-| 2 | Batched TurboQuant-mse quantizer (PyTorch, bit-packing) | ✅ validated |
-| 3 | Distortion-rate validation on DBpedia-OpenAI embeddings (paper §4.1) | ✅ validated |
-| 4 | KV-cache integration (`transformers` Cache, Qwen2.5-0.5B / Llama-3.2-1B) | ✅ validated |
-| 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | ✅ validated |
-| 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | ✅ validated |
-| — | Stretch: TurboQuant-prod (QJL residual, unbiased inner products) | ✅ validated |
-| — | Outlier-channel split (paper §4.3 mixed precision, e.g. 2.5-bit) | 🔧 code + eval plumbing complete — quality runs pending |
+| 1 | Lloyd-Max codebook engine (exact Beta + Gaussian limit) | validated |
+| 2 | Batched TurboQuant-mse quantizer (PyTorch, bit-packing) | validated |
+| 3 | Distortion-rate validation on DBpedia-OpenAI embeddings (paper §4.1) | validated |
+| 4 | KV-cache integration (`transformers` Cache, Qwen2.5-0.5B / Llama-3.2-1B) | validated |
+| 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | validated |
+| 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | validated |
+| — | Stretch: TurboQuant-prod (QJL residual, unbiased inner products) | validated |
+| — | Outlier-channel split (paper §4.3 mixed precision, e.g. 2.5-bit) | ✅ validated |
 
 See [docs/PLAN.md](docs/PLAN.md) for the full technical plan, the distortion-rate math,
 and per-phase pass/fail criteria.
@@ -55,6 +55,9 @@ and per-phase pass/fail criteria.
   centering** fixes a ~1500× KL degradation while staying fully online.
 - Measured packed cache bytes match the analytic formula **exactly**;
   **3.68×** memory vs fp16 at 4-bit, ctx 4096.
+- **Outlier-channel split lands in the paper's claimed "4–6×" range with a
+  measured quality number attached**: 3.75 avg bits/coord (K3+16x5V4)
+  matches fp16 needle recall exactly on Llama-3.2-1B at +10.88% perplexity.
 - TurboQuant-prod (QJL residual): unbiased inner products, within the
   Theorem 2 distortion bound at all bit-widths, on the paper's dataset.
 
@@ -375,8 +378,46 @@ python experiments/03_perplexity.py --bits "2+16x3:4"
 python experiments/03_perplexity.py --bits "2+16x4:4"
 ```
 
-End-to-end quality numbers for these configs are the one remaining pending
-run (A100; see docs/TESTING.md Tier 3).
+**Results (A100, both models; values fixed at 4 bits in every config below,
+so the comparison isolates the key-side split).** Effective key bits and
+the (key, value) average are computed by `OutlierSplitQuantizer.effective_bits`
+(code-verified, not hand-arithmetic):
+
+| config | eff. key bits | avg (K,V) bits/coord | Qwen2.5-0.5B Δppl | Qwen recall | Llama-3.2-1B Δppl | Llama recall |
+|---|---|---|---|---|---|---|
+| b=2 uniform | 2.0 | 3.0 | +2883.03% | 0.000 | +233.06% | 0.160 |
+| K2+16x3V4 (2.25, printed formula) | 2.25 | 3.125 | +813.88% | 0.000 | +75.54% | 0.600 |
+| K2+16x4V4 (2.5, the label) | 2.5 | 3.25 | +664.21% | 0.040 | +61.12% | 0.800 |
+| b=3 uniform | 3.0 | 3.5 | +603.49% | — | +20.61% | — |
+| **K3+16x5V4 (3.5)** | **3.5** | **3.75** | **+161.01%** | **0.360** | **+10.88%** | **1.000** |
+| b=4 uniform | 4.0 | 4.0 | +103.16% | 0.560 | +4.34% | 1.000 |
+| K8V4 | 8.0 | 6.0 | +0.70% | 1.000 | +0.36% | 1.000 |
+
+Three things worth stating plainly:
+
+- **The headline result: K3+16x5V4 matches fp16 needle recall exactly on
+  Llama-3.2-1B (1.000)** — same as K8V4 — while averaging 3.75 bits/coord
+  against K8V4's 6.0, at a modest perplexity cost (+10.88% vs K8V4's
+  +0.36%). This is the first config in this repo landing in the paper's
+  claimed "4–6×" compression range with a measured quality number attached,
+  not just a bit-width arithmetic claim.
+- **The label-faithful reading beats the printed-formula reading at every
+  measurement, on both models and both metrics** (ppl and recall) — exactly
+  what should happen given it spends more bits (2.5 vs 2.25). A useful
+  sanity check that the implementation responds correctly to its own
+  inputs, independent of which reading is "correct" per the paper.
+- **Qwen2.5-0.5B still does not reach fp16 parity at any split tested**,
+  consistent with the model-capacity-dependence finding from Phase 4/5 — the
+  split changes *where* the degradation curve sits, not that small models
+  are more sensitive at fixed bit budget than Llama-3.2-1B. Whether an even
+  higher outlier ratio (more than 16 of 64 channels) closes this gap on
+  small models is open.
+
+Not run: `05_memory_bench.py`'s packed-byte measurement is hardcoded to
+`bits=4` and wasn't extended to outlier configs this session — the
+"avg bits/coord" column above is `OutlierSplitQuantizer.effective_bits`,
+the same code-verified formula `tests/test_outlier.py` pins, not a fresh
+measured packed-byte count.
 
 Everything is drivable through one CLI, `turboquant-bench`
 ([`turboquant/cli.py`](turboquant/cli.py)), with `--profile local`

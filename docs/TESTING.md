@@ -129,9 +129,13 @@ What a genuine pass looks like:
   rotation is an fp32 matmul — so this is a speed-vs-distortion tradeoff to
   measure, not a free win. Nothing else in the repo enables it: `kv_cache.py`
   deliberately keeps quantizer math in true fp32.
-- **The open scale question**: does uniform b=4 remain degraded at
-  Llama-3.2-1B (head_dim 64) as it is at 0.5B, and does K8V4 remain
-  neutral? Record whatever comes out — both outcomes are informative.
+- **The scale question, answered**: uniform b=4 does *not* remain degraded
+  at Llama-3.2-1B — +103% ppl at 0.5B shrinks to +4.3% at 1B, same
+  head_dim, so the Phase 4 finding is model-capacity-dependent, not a
+  head_dim effect. K8V4 stays neutral at both scales. See README Phase 4.
+  The remaining open question is whether an outlier ratio beyond 16/64
+  channels would close the same gap on small models — the split narrows
+  it (README's outlier section) but doesn't close it at 0.5B.
 
 ## Implemented vs not implemented (honest scope)
 
@@ -146,10 +150,12 @@ Implemented and validated with real runs:
   suite (07) — all run on RunPod A100, both models where applicable; see
   README Phases 5/6 and Stretch. CUDA branch of device auto-detection
   exercised for real (was previously read-only-verified).
-
-Implemented, statically verified, **runs pending**:
-- Outlier-split end-to-end quality (paper §4.3 2.5/3.5-bit configs) —
-  natural next phase now that Llama-scale K/V numbers exist.
+- Outlier-split end-to-end quality (paper §4.3, both the printed-formula
+  and label readings of its 2.5-bit config, plus its 3.5-bit config) —
+  see README's outlier-split section. Not run: `05_memory_bench.py`'s
+  packed-byte measurement against these configs (it's hardcoded to
+  `bits=4`); the reported bit-widths there are the code-verified
+  `OutlierSplitQuantizer.effective_bits` formula, not a fresh byte count.
 
 Not implemented (explicit non-goals so far):
 - Fused CUDA/Metal kernels computing attention logits directly on codes
