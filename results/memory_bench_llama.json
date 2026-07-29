@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "timestamp": "2026-07-29T15:50:30+00:00",
+    "git_sha": "3966114",
+    "platform": "Linux-6.8.0-107-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "torch": "2.8.0+cu128",
+    "gpu": "NVIDIA A100 80GB PCIe",
+    "transformers": "5.14.1",
+    "device": "cuda"
+  },
+  "model": "meta-llama/Llama-3.2-1B-Instruct",
+  "device": "cuda",
+  "memory": {
+    "512": {
+      "fp16": 16777216,
+      "packed": 5259264
+    },
+    "2048": {
+      "fp16": 67108864,
+      "packed": 18628608
+    },
+    "4096": {
+      "fp16": 134217728,
+      "packed": 36454400
+    }
+  },
+  "decode_tok_s": {
+    "fp16": 80.00195537816448,
+    "b=4 simulate": 25.997575607235557,
+    "b=4 packed": 26.153438151171144
+  }
+}

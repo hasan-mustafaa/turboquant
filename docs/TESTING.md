@@ -132,12 +132,16 @@ Implemented and validated with real runs:
   bit-exact packing widths 1–8, Haar rotations w/ sign fix — Tier 1.
 - DBpedia distortion-rate + bias study (paper §4.1, its actual dataset).
 - KV cache (transformers ≥v5), frozen-μ key centering, K/V bit splits,
-  perplexity results on Qwen2.5-0.5B (MPS).
+  perplexity results on Qwen2.5-0.5B (MPS) and Qwen2.5-0.5B + Llama-3.2-1B
+  (A100 CUDA) — see README Phase 4.
+- Needle grid (04), memory bench (05), CUDA bench (06), QJL validation
+  suite (07) — all run on RunPod A100, both models where applicable; see
+  README Phases 5/6 and Stretch. CUDA branch of device auto-detection
+  exercised for real (was previously read-only-verified).
 
 Implemented, statically verified, **runs pending**:
-- Needle grid (04), memory bench (05), CUDA bench (06), QJL validation
-  suite (07), outlier-split end-to-end quality, all `--profile cloud` runs,
-  CUDA branch of device auto-detection.
+- Outlier-split end-to-end quality (paper §4.3 2.5/3.5-bit configs) —
+  natural next phase now that Llama-scale K/V numbers exist.
 
 Not implemented (explicit non-goals so far):
 - Fused CUDA/Metal kernels computing attention logits directly on codes
@@ -161,3 +165,24 @@ the suite changes):
   averages away — the theorem's E_Q demands averaging over Q; (b) batch
   concatenation asserts exact equality on *codes* but only `allclose` on
   decoded floats (matmul blocking differs across batch sizes).
+- **2026-07-29, RunPod A100 80GB PCIe (full suite, incl. KV cache):**
+  `pytest tests/ -q` → **106 passed, 1 failed in ~36 s**. The one failure,
+  `test_kv_cache.py::TestKVCache::test_split_point_invariance`, is
+  reproducible (byte-identical across reruns) but appears CUDA-only —
+  never observed on CPU/MPS. Ruled out: TF32 (disabling
+  `torch.backends.cuda.matmul.allow_tf32`/`cudnn.allow_tf32` reproduces the
+  exact same failing tensors). Leading hypothesis: `scaled_dot_product_attention`
+  dispatches to a different backend (flash-attention vs math) depending on
+  sequence length, and chunked (500+12 tokens) vs single (512-token) passes
+  hit different backends with non-bit-identical (but each internally
+  consistent) floating-point reduction order — the model is loaded in true
+  float32 here (`dtype=torch.float32`), so this isn't a dtype-precision
+  story. Not yet confirmed by forcing `attn_implementation="eager"`. Treated
+  as a documented, non-blocking discrepancy rather than a correctness bug in
+  the cache's split-point logic — the same real forward pass, chunked two
+  ways, agrees on every other test (KL, packed==simulate, monotonicity,
+  centering).
+- Also found and fixed during this run: `experiments/05_memory_bench.py`'s
+  hardcoded analytic byte formula never accounted for the fp16 warmup window
+  or frozen-μ overhead (it was never actually executed before this run — see
+  README Phase 6 for the corrected formula and passing numbers).

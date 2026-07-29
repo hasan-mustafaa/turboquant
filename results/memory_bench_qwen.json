@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "timestamp": "2026-07-29T15:48:58+00:00",
+    "git_sha": "3966114",
+    "platform": "Linux-6.8.0-107-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "torch": "2.8.0+cu128",
+    "gpu": "NVIDIA A100 80GB PCIe",
+    "transformers": "5.14.1",
+    "device": "cuda"
+  },
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "device": "cuda",
+  "memory": {
+    "512": {
+      "fp16": 6291456,
+      "packed": 1972224
+    },
+    "2048": {
+      "fp16": 25165824,
+      "packed": 6985728
+    },
+    "4096": {
+      "fp16": 50331648,
+      "packed": 13670400
+    }
+  },
+  "decode_tok_s": {
+    "fp16": 57.028969443289206,
+    "b=4 simulate": 18.58988229749844,
+    "b=4 packed": 17.39272472335299
+  }
+}
