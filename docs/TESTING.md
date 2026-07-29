@@ -123,6 +123,12 @@ What a genuine pass looks like:
 - **Speedup**: no fused CUDA kernels here, so no attention-latency claims
   are made or reproduced. (Note: the "8× logit speedup on H100" figure some
   summaries attribute to this paper is not in arXiv v1 at all.)
+- **TF32**: `06_cuda_bench.py` sweeps `--tf32 both` by default, reporting
+  encode/decode time *and* measured d·D_mse for each setting. Ampere+ GPUs
+  run fp32 matmuls at TF32 (10-bit mantissa) by default, and TurboQuant's
+  rotation is an fp32 matmul — so this is a speed-vs-distortion tradeoff to
+  measure, not a free win. Nothing else in the repo enables it: `kv_cache.py`
+  deliberately keeps quantizer math in true fp32.
 - **The open scale question**: does uniform b=4 remain degraded at
   Llama-3.2-1B (head_dim 64) as it is at 0.5B, and does K8V4 remain
   neutral? Record whatever comes out — both outcomes are informative.
