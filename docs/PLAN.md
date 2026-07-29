@@ -1,13 +1,14 @@
 # TurboQuant-mse Implementation Plan
 
-> Status 2026-07-19 (end of implementation): Phases 1-4 complete, validated,
-> pushed. Phase 4 findings: frozen-mu online key centering required (raw
-> 4-bit keys catastrophic on Qwen2.5-0.5B — ~98% of key norm is a shared
-> constant), and keys-need-precision (K8V4 @ 6.125 bits quality-neutral;
-> K4V8 at the same budget reproduces the uniform-b=4 blowup). Phases 5-6 and
-> the QJL stretch: code complete, all runs deferred — see the local,
-> gitignored docs/RUNBOOK.md for the exact commands, expected numbers, and RunPod
-> hosting steps. Llama-3.2-1B runs need `hf auth login` first.
+> Status 2026-07-29: Phases 1-6 and the QJL stretch complete, validated on
+> RunPod A100, pushed — full results and findings in the README. Key Phase
+> 4-6 findings: frozen-mu online key centering required (raw 4-bit keys
+> catastrophic on Qwen2.5-0.5B — ~98% of key norm is a shared constant);
+> keys-need-precision (K8V4 quality-neutral at both model scales); uniform
+> b=4 degradation is model-capacity-dependent (+103% ppl at 0.5B vs +4.3%
+> at 1B, same head_dim). Remaining: outlier-split end-to-end quality runs
+> (plumbing done — experiments/_configs.py grammar; needs an A100 session).
+> Llama-3.2-1B runs need `hf auth login` first.
 
 Target: rigorous from-the-paper implementation of TurboQuant-mse (Zandieh, Daliri,
 Hadian, Mirrokni — "TurboQuant: Online Vector Quantization with Near-optimal
@@ -287,7 +288,7 @@ b = 1..4. Natural demo: recall@k retrieval on GloVe vs the mse variant.
     ├── pyproject.toml
     ├── docs/
     │   ├── PLAN.md              # this file
-    │   └── RUNBOOK.md           # gitignored: deferred run commands + RunPod steps
+    │   └── TESTING.md           # three-tier testing guide (laptop -> cloud GPU)
     ├── turboquant/
     │   ├── __init__.py
     │   ├── codebooks.py        # Phase 1: Lloyd-Max (Gaussian + exact Beta)

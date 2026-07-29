@@ -55,6 +55,18 @@ def _provenance(device: str | None) -> dict:
     return meta
 
 
+def model_slug(model_id: str) -> str:
+    """Short family tag for results filenames: 'qwen', 'llama', or a
+    sanitized fallback. Model-quality benchmarks suffix their output with
+    this so runs against different models never overwrite each other
+    (which silently happened once before this existed)."""
+    low = model_id.lower()
+    for family in ("qwen", "llama"):
+        if family in low:
+            return family
+    return low.rsplit("/", 1)[-1].replace(".", "").replace("-", "_")
+
+
 def save_results(name: str, payload: dict, device: str | None = None) -> Path:
     """Write results/<name>.json with a provenance block; returns the path."""
     RESULTS.mkdir(exist_ok=True)

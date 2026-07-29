@@ -24,7 +24,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _configs import parse_bits_token
 from _device import default_device, default_dtype
-from _results import save_results
+from _results import model_slug, save_results
 
 NEEDLE = ("\n\nThe secret access code for the vault mentioned in the annual "
           "report is {code}. Remember this number carefully.\n\n")
@@ -122,7 +122,7 @@ def main() -> None:
     print(f"PASS: {must_match} match fp16 cell-for-cell" if match
           else f"MISMATCH vs fp16 in {must_match} -- inspect grid")
 
-    out = save_results("needle", {
+    out = save_results(f"needle_{model_slug(args.model)}", {
         "model": args.model, "grid": grid, "recall": summary},
         device=args.device)
     print(f"saved {out}")

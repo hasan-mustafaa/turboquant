@@ -27,7 +27,7 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _configs import parse_bits_token
 from _device import default_device, default_dtype
-from _results import save_results
+from _results import model_slug, save_results
 
 
 def load_wikitext_tokens(tok, n_tokens: int) -> torch.Tensor:
@@ -96,7 +96,7 @@ def main() -> None:
         print(f"  TurboQuant {name} (K+V): ppl {ppl:.4f}  "
               f"(+{100 * (ppl / base - 1):.2f}%)  [{time.time() - t0:.0f}s]")
 
-    out = save_results("perplexity", {
+    out = save_results(f"perplexity_{model_slug(args.model)}", {
         "model": args.model, "ctx": args.ctx, "seqs": args.seqs,
         "ppl": results}, device=args.device)
     print(f"saved {out}")

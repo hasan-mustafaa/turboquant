@@ -35,10 +35,28 @@ nearest-centroid search), with worst-case per-vector guarantees:
 | 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | ✅ validated |
 | 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | ✅ validated |
 | — | Stretch: TurboQuant-prod (QJL residual, unbiased inner products) | ✅ validated |
-| — | Outlier-channel split (paper §4.3 mixed precision, e.g. 2.5-bit) | 🔧 code complete — quality runs pending |
+| — | Outlier-channel split (paper §4.3 mixed precision, e.g. 2.5-bit) | 🔧 code + eval plumbing complete — quality runs pending |
 
 See [docs/PLAN.md](docs/PLAN.md) for the full technical plan, the distortion-rate math,
 and per-phase pass/fail criteria.
+
+**Results at a glance** (all from real runs — provenance blocks in
+`results/*.json`; no simulated numbers anywhere in this repo):
+
+- Quantizer MSE within **0.1%** of the analytic Lloyd-Max optimum at every
+  bit-width, on synthetic vectors *and* the paper's actual 100k-embedding
+  dataset (data-obliviousness, demonstrated).
+- **K8V4 KV cache is quality-neutral** (≤+0.7% perplexity, needle recall
+  identical to fp16 cell-for-cell) on both Qwen2.5-0.5B and Llama-3.2-1B.
+- **Uniform 4-bit is model-capacity-dependent**: catastrophic at 0.5B
+  (+103% ppl), nearly free at 1B (+4.3%) — same head_dim, so this isolates
+  a capacity effect the paper's head_dim-based bound doesn't predict.
+- Keys are anisotropic (~98% of key norm is a shared constant); **frozen-μ
+  centering** fixes a ~1500× KL degradation while staying fully online.
+- Measured packed cache bytes match the analytic formula **exactly**;
+  **3.68×** memory vs fp16 at 4-bit, ctx 4096.
+- TurboQuant-prod (QJL residual): unbiased inner products, within the
+  Theorem 2 distortion bound at all bit-widths, on the paper's dataset.
 
 ## Phase 1 results — codebook engine vs the paper
 
@@ -329,15 +347,36 @@ Engineering notes: code packing is exact bit-level for every width 1–8
 in-process and on disk (`~/.cache/turboquant/`); Haar rotations are memoized
 per (d, seed).
 
-The **paper's §4.3 mixed-precision outlier split is implemented too**
-([`turboquant/outlier.py`](turboquant/outlier.py)): channels are partitioned
-*before* rotation into an outlier set (selected by per-channel RMS on the
-warmup window, frozen once — applied to *centered* keys in the KV cache) and
-a regular set, each with its own rotation + codebook, e.g. 32 ch × 3 bit +
-96 ch × 2 bit = the paper's 2.5-bit config
-(`TurboQuantCache(bits_k=2, outlier_channels=32, bits_k_outlier=3)`).
-Model-free tests validate selection, reassembly, and storage accounting;
-end-to-end quality numbers await the cloud runs.
+## Outlier-channel split — the paper's §4.3 mixed precision
+
+([`turboquant/outlier.py`](turboquant/outlier.py)) Channels are partitioned
+*before* rotation (a Haar rotation mixes all channels, so per-channel bit
+allocation is only possible by splitting first) into an outlier set —
+selected by per-channel RMS on the warmup window, frozen once, applied to
+*centered* keys — and a regular set, each with its own rotation + codebook.
+This is the channel-space analogue of the frozen-μ centering above, and the
+two compose: selection ranks channels by residual scale, not by the constant
+offset centering already removed. Model-free tests validate selection,
+reassembly, storage accounting, and that the split beats uniform-low-bit
+≥5× on outlier-heavy synthetic data.
+
+**Discrepancy flagged, not forced — the paper's printed 2.5-bit config
+doesn't equal 2.5 bits.** Section 4.3 states, verbatim,
+"(32×3+96×2)/128=2.5"; that expression equals **2.25**. Either the label is
+wrong (they ran 2.25 effective bits) or the formula is misprinted
+(32×**4**+96×2 = 320/128 gives a true 2.5). Both readings are runnable here,
+scaled 1:3 to head_dim 64, through the experiment scripts' extended `--bits`
+grammar ([`experiments/_configs.py`](experiments/_configs.py)):
+
+```bash
+# keys 2-bit + 16 outlier channels at 3 bits (paper's printed formula, 2.25):
+python experiments/03_perplexity.py --bits "2+16x3:4"
+# keys 2-bit + 16 outlier channels at 4 bits (paper's label, true 2.5):
+python experiments/03_perplexity.py --bits "2+16x4:4"
+```
+
+End-to-end quality numbers for these configs are the one remaining pending
+run (A100; see docs/TESTING.md Tier 3).
 
 Everything is drivable through one CLI, `turboquant-bench`
 ([`turboquant/cli.py`](turboquant/cli.py)), with `--profile local`

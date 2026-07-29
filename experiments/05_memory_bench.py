@@ -21,7 +21,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _device import default_device, default_dtype, synchronize
-from _results import save_results
+from _results import model_slug, save_results
 
 from turboquant.kv_cache import TurboQuantCache
 
@@ -106,7 +106,8 @@ def main() -> None:
         report["decode_tok_s"][name] = tps
         print(f"  {name:>13}: {tps:6.2f} tok/s")
 
-    out = save_results("memory_bench", report, device=args.device)
+    out = save_results(f"memory_bench_{model_slug(args.model)}", report,
+                       device=args.device)
     print(f"saved {out}")
 
 
