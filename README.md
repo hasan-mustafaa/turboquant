@@ -2,66 +2,105 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-A rigorous, standalone implementation of **TurboQuant** (Zandieh, Daliri,
-Hadian, Mirrokni — *TurboQuant: Online Vector Quantization with Near-optimal
-Distortion Rate*, [arXiv:2504.19874](https://arxiv.org/abs/2504.19874)),
-built phase by phase and validated against the paper's reported numbers at
-every step. Target application: online 4-bit KV-cache quantization of
-Llama-3.2-1B. No wrappers around existing quantization libraries — the
-algorithm is implemented from the math in the paper.
+A standalone implementation of **TurboQuant** (Zandieh, Daliri, Hadian,
+Mirrokni — *Online Vector Quantization with Near-optimal Distortion Rate*,
+[arXiv:2504.19874](https://arxiv.org/abs/2504.19874)), built from the paper's
+math — no wrappers around existing quantization libraries — and applied to
+4-bit KV-cache compression for Llama-3.2-1B and Qwen2.5-0.5B. Every number
+below comes from a real run (provenance blocks in `results/*.json`); nothing
+is simulated.
 
-**The algorithm in one paragraph.** A unit vector is multiplied by a
-Haar-random orthogonal matrix Π, making it uniform on the sphere; each
-coordinate of the rotated vector then has a *known* marginal density — a
-symmetric Beta((d−1)/2, (d−1)/2) mapped to [−1, 1], → N(0, 1/d) for large d
-(paper, Lemma 1). Each coordinate is quantized independently with the optimal
-Lloyd-Max scalar quantizer for that density (a continuous 1-D k-means,
-paper Eq. 4), and reconstruction is a table lookup followed by Πᵀ. Because the
-codebook depends only on the rotation-induced distribution — never on data —
-the scheme is **data-oblivious** (no calibration set, no training) and
-**online** (each vector quantized independently on arrival, one matmul + one
-nearest-centroid search), with worst-case per-vector guarantees:
-4⁻ᵇ ≤ D_mse ≤ (√3π/2)·4⁻ᵇ ≈ 2.72·4⁻ᵇ at b bits per coordinate
-(paper, Theorems 1 & 3).
+## Highlights
 
-## Status
+- Implemented every theoretical guarantee from the paper and validated it to
+  within **0.1%** of the closed-form optimum — on synthetic data *and* the
+  paper's own 100k-embedding dataset.
+- **Found a real bug in the paper**: its printed 2.5-bit outlier config,
+  `(32×3+96×2)/128=2.5`, actually equals 2.25. Both readings are implemented
+  and evaluated rather than silently repeating the arithmetic.
+- **Discovered transformer keys are ~98% shared constant** (K-projection
+  bias), which breaks relative-error quantization; fixed it with **frozen-μ
+  centering**, a ~1500× KL improvement, while staying fully online.
+- **Found that KV-cache degradation is model-capacity-dependent, not just
+  head_dim-dependent** — the paper's own bound doesn't predict this. Uniform
+  4-bit keys: +103% perplexity at 0.5B, +4.3% at 1B, same head_dim.
+- The paper's claimed "4–6× compression" reproduced with a measured quality
+  number attached: 3.75 bits/coord matches fp16 retrieval exactly on
+  Llama-3.2-1B.
+- TurboQuant-prod (QJL, Algorithm 2) validated: unbiased inner products
+  within the Theorem 2 bound at every bit-width.
+- 107 tests, 106 passing; the one CUDA-only discrepancy is root-caused as
+  far as TF32 (ruled out) and documented rather than hidden — see
+  [Known limitations](#known-limitations--non-goals).
 
-| Phase | Deliverable | Status |
-|---|---|---|
-| 1 | Lloyd-Max codebook engine (exact Beta + Gaussian limit) | validated |
-| 2 | Batched TurboQuant-mse quantizer (PyTorch, bit-packing) | validated |
-| 3 | Distortion-rate validation on DBpedia-OpenAI embeddings (paper §4.1) | validated |
-| 4 | KV-cache integration (`transformers` Cache, Qwen2.5-0.5B / Llama-3.2-1B) | validated |
-| 5 | Long-context evaluation (needle-in-a-haystack, bit-width sweep) | validated |
-| 6 | Memory accounting + throughput (MPS/CPU + RunPod CUDA) | validated |
-| — | Stretch: TurboQuant-prod (QJL residual, unbiased inner products) | validated |
-| — | Outlier-channel split (paper §4.3 mixed precision, e.g. 2.5-bit) | ✅ validated |
+## Why this repository
 
-See [docs/PLAN.md](docs/PLAN.md) for the full technical plan, the distortion-rate math,
-and per-phase pass/fail criteria.
+Most public TurboQuant-adjacent code optimizes for throughput (fused
+kernels, deployable compression ratios). This one optimizes for **evidence**:
+every claim is checked against a closed-form bound, a paper table, or a
+controlled experiment, and every discrepancy — in the paper or in this code
+— is reported rather than smoothed over. If you want a fast KV-cache
+compressor, this isn't it (see non-goals below). If you want to know exactly
+where a quantization scheme's guarantees hold, degrade, and break, that's
+what's here.
 
-**Results at a glance** (all from real runs — provenance blocks in
-`results/*.json`; no simulated numbers anywhere in this repo):
+## Quick start
 
-- Quantizer MSE within **0.1%** of the analytic Lloyd-Max optimum at every
-  bit-width, on synthetic vectors *and* the paper's actual 100k-embedding
-  dataset (data-obliviousness, demonstrated).
-- **K8V4 KV cache is quality-neutral** (≤+0.7% perplexity, needle recall
-  identical to fp16 cell-for-cell) on both Qwen2.5-0.5B and Llama-3.2-1B.
-- **Uniform 4-bit is model-capacity-dependent**: catastrophic at 0.5B
-  (+103% ppl), nearly free at 1B (+4.3%) — same head_dim, so this isolates
-  a capacity effect the paper's head_dim-based bound doesn't predict.
-- Keys are anisotropic (~98% of key norm is a shared constant); **frozen-μ
-  centering** fixes a ~1500× KL degradation while staying fully online.
-- Measured packed cache bytes match the analytic formula **exactly**;
-  **3.68×** memory vs fp16 at 4-bit, ctx 4096.
-- **Outlier-channel split lands in the paper's claimed "4–6×" range with a
-  measured quality number attached**: 3.75 avg bits/coord (K3+16x5V4)
-  matches fp16 needle recall exactly on Llama-3.2-1B at +10.88% perplexity.
-- TurboQuant-prod (QJL residual): unbiased inner products, within the
-  Theorem 2 distortion bound at all bit-widths, on the paper's dataset.
+```bash
+git clone https://github.com/hasan-mustafaa/turboquant && cd turboquant
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m pytest tests/ -q --ignore=tests/test_kv_cache.py   # 100 tests, no model/network needed
+.venv/bin/python -m turboquant.codebooks                               # Phase 1 table
+turboquant-bench validate                                              # Phase 2 report
+```
 
-## Phase 1 results — codebook engine vs the paper
+Real-model runs (KV cache, perplexity, needle-in-a-haystack) need
+`pip install -e ".[dev,llm]"` and either a laptop-scale ungated model
+(`--profile local`, Qwen2.5-0.5B) or a rented GPU with a gated model
+(`--profile cloud`, Llama-3.2-1B, needs `hf auth login`):
+
+```bash
+turboquant-bench ppl --profile local
+turboquant-bench all --profile cloud   # everything: ppl, needle, memory, cuda, qjl
+```
+
+`experiments/run_all.sh` runs the full suite (both models, every config used
+below) in one command.
+
+## Repository structure
+
+```
+turboquant/
+├── turboquant/
+│   ├── codebooks.py     # Phase 1: exact Lloyd-Max (Beta + Gaussian limit)
+│   ├── rotation.py       # Phase 2: seeded Haar rotations (QR sign fix)
+│   ├── quantizer.py      # Phase 2: batched encode/decode + bit-packing
+│   ├── kv_cache.py       # Phase 4: transformers Cache integration
+│   ├── outlier.py         # §4.3 mixed-precision channel split
+│   └── qjl.py             # Stretch: TurboQuant-prod (QJL residual)
+├── tests/                 # pytest — theory + implementation correctness
+├── experiments/            # 00-07: reproducible scripts behind every table below
+└── results/                 # results/*.json + plots, each with a provenance block
+```
+
+## The algorithm
+
+TurboQuant rotates each unit vector by a Haar-random orthogonal matrix,
+which makes every coordinate of the rotated vector follow a *known*,
+data-independent marginal distribution. Because that distribution is known
+in advance, each coordinate can be quantized with the optimal 1-D Lloyd-Max
+codebook for it — computed once, never touching real data. This makes the
+whole scheme **data-oblivious** (no calibration, no training) and **online**
+(one matmul + one nearest-centroid lookup per vector), with a worst-case
+per-vector guarantee: 4⁻ᵇ ≤ D_mse ≤ 2.72·4⁻ᵇ at `b` bits/coordinate (paper,
+Theorems 1 & 3).
+
+## Results
+
+Full phase-by-phase results, expand for details:
+
+<details>
+<summary><b>Phase 1 — codebook engine vs the paper</b></summary>
 
 Normalized MSE `d·C(f_X, b)` (per-unit-vector distortion), solved by exact
 Lloyd-Max iteration (closed-form cell statistics, no quadrature):
@@ -85,7 +124,10 @@ Lloyd-Max iteration (closed-form cell statistics, no quadrature):
   0.0095 (Max, 1960) — the paper's own bounds bracket both, and our tests
   assert the precise values.
 
-## Phase 2 results — batched quantizer (Algorithm 1) vs theory
+</details>
+
+<details>
+<summary><b>Phase 2 — batched quantizer (Algorithm 1) vs theory</b></summary>
 
 End-to-end Monte-Carlo MSE (Haar rotation → bucketize encode → uint8
 bit-packing → decode → back-rotation) against the analytic d·C(f_X, b),
@@ -113,7 +155,10 @@ on random unit vectors:
 - Throughput (M2, batch 100k, d=128, b=4): 1.5M vec/s CPU, 3.0M vec/s MPS,
   with 100.000% CPU/MPS code agreement.
 
-## Phase 3 results — the paper's §4.1 experiment on its actual dataset
+</details>
+
+<details>
+<summary><b>Phase 3 — the paper's §4.1 experiment on its actual dataset</b></summary>
 
 100k DBpedia entities × OpenAI text-embedding-3-large-1536 (the dataset behind
 the paper's Fig. 3), 1k held-out queries, streamed sample:
@@ -144,21 +189,10 @@ the paper's Fig. 3), 1k held-out queries, streamed sample:
   inner-product error (d·D_prod = 2.55 at b=1) is *worse* than the paper's
   unbiased prod variant (1.57): the gap is the bias² term D²·⟨y,x⟩².
 
-Reproduce:
+</details>
 
-```bash
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/ -q --ignore=tests/test_kv_cache.py
-                                           # Tier 1: 100 tests, no model needed
-.venv/bin/python -m turboquant.codebooks   # Phase 1 table
-turboquant-bench validate                  # Phase 2 report
-turboquant-bench ppl --profile local       # real-model runs (see docs/TESTING.md)
-```
-
-Full testing guide — three tiers from laptop-only to cloud GPU, with expected
-numbers at each stage: [docs/TESTING.md](docs/TESTING.md).
-
-## Phase 4 results — online KV-cache quantization in a real model
+<details>
+<summary><b>Phase 4 — online KV-cache quantization in a real model</b></summary>
 
 `TurboQuantCache` plugs into `transformers` as `past_key_values`: post-RoPE
 keys and values are quantized per head vector the moment they enter the cache
@@ -248,13 +282,16 @@ Both models share head_dim=64, so this isolates a *model-capacity* effect
 from the *head_dim* effect the paper's own bound predicts: uniform b=4 goes
 from catastrophic (+103%) at 0.5B to merely degraded (+4.3%) at 1B — a >20×
 shrinkage in the K8V4-vs-b=4 gap for a 2× parameter increase. The
-needle-in-a-haystack grid (Phase 5, below) shows the same pattern: b=4
-recall goes from 0.560 (Qwen) to 1.000 (Llama). K8V4 stays quality-neutral
-at both scales and remains the config to reach for; the paper-style
-outlier-split is the natural follow-on for closing the remaining uniform-b=4
-gap without hand-picking K/V precision.
+needle-in-a-haystack grid (Phase 5) shows the same pattern: b=4 recall goes
+from 0.560 (Qwen) to 1.000 (Llama). K8V4 stays quality-neutral at both
+scales and remains the config to reach for; the outlier-split (below) is the
+natural follow-on for closing the remaining uniform-b=4 gap without
+hand-picking K/V precision.
 
-## Phase 5 results — long-context needle-in-a-haystack
+</details>
+
+<details>
+<summary><b>Phase 5 — long-context needle-in-a-haystack</b></summary>
 
 [`experiments/04_needle.py`](experiments/04_needle.py): a random 4-digit code
 is planted in filler text at 5 depths (0–100% of context) and 5 lengths
@@ -276,7 +313,10 @@ recall 0.560 → 1.000 going from 0.5B to 1B parameters).
 ([full grid](results/needle_qwen.json) ·
 [Llama grid](results/needle_llama.json))
 
-## Phase 6 results — memory accounting + throughput
+</details>
+
+<details>
+<summary><b>Phase 6 — memory accounting + throughput</b></summary>
 
 **Memory** ([`experiments/05_memory_bench.py`](experiments/05_memory_bench.py)):
 measured device bytes of the packed b=4 cache against the closed-form byte
@@ -317,9 +357,27 @@ qualitative claim ("indexing time virtually zero") reproduces. Flagged
 honestly rather than smoothed over: the gap to the paper *widens* with `d`,
 consistent with this matmul+bucketize encoder's Haar-rotation cost scaling
 closer to O(d²) per vector than whatever fused kernel the paper benchmarked.
+
+**TF32 tradeoff** (Ampere+ tensor cores run fp32 matmuls at reduced
+mantissa by default; the Haar rotation *is* an fp32 matmul, so this is a
+real speed-vs-distortion knob, swept explicitly rather than left implicit):
+
+| d | encode speedup | decode speedup | d·D_mse (off → on) |
+|---|---|---|---|
+| 200 | 1.12× | 1.07× | 0.0093742 → 0.0093744 |
+| 1,536 | 1.86× | 1.51× | 0.0094816 → 0.0094817 |
+| 3,072 | **2.51×** | 1.98× | 0.0094916 → 0.0094917 |
+
+Up to 2.5× faster with a distortion difference in the 6th significant
+figure — TF32 is close to a free win for this specific workload, measured
+rather than assumed. Nothing else in this repo enables TF32:
+`kv_cache.py` deliberately keeps quantizer math in true fp32.
 ([results](results/cuda_bench_cuda.json))
 
-## Stretch phase — TurboQuant-prod (validated)
+</details>
+
+<details>
+<summary><b>Stretch — TurboQuant-prod (QJL residual)</b></summary>
 
 [`turboquant/qjl.py`](turboquant/qjl.py) implements Algorithm 2: mse stage at
 b−1 bits, then the QJL transform (sign(S·r), S Gaussian) on the residual with
@@ -350,7 +408,10 @@ Engineering notes: code packing is exact bit-level for every width 1–8
 in-process and on disk (`~/.cache/turboquant/`); Haar rotations are memoized
 per (d, seed).
 
-## Outlier-channel split — the paper's §4.3 mixed precision
+</details>
+
+<details>
+<summary><b>Outlier-channel split — the paper's §4.3 mixed precision</b></summary>
 
 ([`turboquant/outlier.py`](turboquant/outlier.py)) Channels are partitioned
 *before* rotation (a Haar rotation mixes all channels, so per-channel bit
@@ -414,10 +475,12 @@ Three things worth stating plainly:
   small models is open.
 
 Not run: `05_memory_bench.py`'s packed-byte measurement is hardcoded to
-`bits=4` and wasn't extended to outlier configs this session — the
-"avg bits/coord" column above is `OutlierSplitQuantizer.effective_bits`,
-the same code-verified formula `tests/test_outlier.py` pins, not a fresh
-measured packed-byte count.
+`bits=4` and wasn't extended to outlier configs — the "avg bits/coord"
+column above is `OutlierSplitQuantizer.effective_bits`, the same
+code-verified formula `tests/test_outlier.py` pins, not a fresh measured
+packed-byte count.
+
+</details>
 
 Everything is drivable through one CLI, `turboquant-bench`
 ([`turboquant/cli.py`](turboquant/cli.py)), with `--profile local`
@@ -425,6 +488,29 @@ Everything is drivable through one CLI, `turboquant-bench`
 (gated Llama-3.2-1B, full sweeps on a rented GPU); results land in
 `results/*.json` with a provenance block (git SHA, device, versions,
 timestamp) — the enforcement mechanism for this repo's no-fake-numbers rule.
+
+## Known limitations / non-goals
+
+- **One CUDA-only test discrepancy, unresolved but not hidden**:
+  `test_kv_cache.py::test_split_point_invariance` fails reproducibly on
+  A100 (never on CPU/MPS) — chunked-prefill and single-pass logits disagree
+  by ~1e-2, just over the test's `atol=2e-3`. TF32 was ruled out (disabling
+  it reproduces the identical failing values); the leading hypothesis is
+  `scaled_dot_product_attention` dispatching to a different backend
+  (flash-attention vs math) depending on sequence-length chunking, each
+  internally consistent but not bit-identical to the other. 106/107 tests
+  pass; this one is deselected by name in `experiments/run_all.sh` with a
+  comment, not silently ignored.
+- **No fused CUDA/Metal kernels** computing attention logits directly on
+  codes — this is where the paper's own latency story lives, and it's an
+  explicit non-goal here (see Phase 6: packed decode is *slower* than fp16,
+  by design, not a regression).
+- **No entropy coding** of code indices (the paper skips this too — ~5%
+  headroom left at b=4, per Phase 1).
+- **No beam-search cache surgery** — `crop`/`batch_*` raise
+  `NotImplementedError` by design in packed mode.
+- `05_memory_bench.py`'s measured-byte assertion was never extended to the
+  outlier-split configs (see above).
 
 ## Source
 
